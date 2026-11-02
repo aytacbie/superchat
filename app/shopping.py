@@ -15,6 +15,12 @@ CATEGORIES = {
     "home": ["coffee", "qehve", "кофе"],
     "gifts": ["board game", "gift", "game$", "games$", "oyun", "hediyye", "игра$", "игру$", "игры$",
               "настольн", "подар"],
+    # categories that only the live catalogue has
+    "tablets": ["tablet", "ipad", "planset", "планшет"],
+    "fragrances": ["perfume", "fragrance", "etir", "духи", "парфюм"],
+    "beauty": ["makeup", "mascara", "lipstick", "kosmetik", "косметик"],
+    "sunglasses": ["sunglass", "gunes eyney", "солнцезащит"],
+    "groceries": ["grocer", "meyve", "terevez", "продукт"],
 }
 COLORS = {
     "black": ["black", "qara", "черн"],
@@ -29,6 +35,9 @@ CART = ["cart", "basket", "sebet", "корзин"]
 STOCK = ["stock", "stok", "налич"]
 COMPARE = ["compare", "comparison", "difference", "vs$", "versus", "muqayise", "ferq", "сравн", "разниц"]
 _SKIP = {"saat", "dest", "speak", "lite", "pro"}
+# Short words in live product names ("Green and Black Glasses", "CK One") that are not model names.
+_SHORT_SKIP = {"and", "the", "for", "with", "one", "men", "new", "set", "of", "in", "by", "to", "on", "at", "red"}
+LIMIT = 10  # the live catalogue can match dozens of products; longer lists are cut with a hint
 # Words that only express wanting something; what is left of the message is the product asked for.
 _FILLER = {"salam", "hi", "hello", "hey", "привет", "здравствуйте", "mene", "menim", "ucun", "lazim", "lazimdi",
            "lazimdir", "lazimdır", "need", "i", "a", "an", "the", "want", "to", "buy", "please", "do", "you", "have",
@@ -53,10 +62,12 @@ def _stems(p):
 def _short_names(p):
     """Short model words such as 'Pro', 'Air', 'X5' that only count as whole words."""
     return {w + "$" for name in p["name"].values() for w in re.findall(r"\w+", fold(name))
-            if 2 <= len(w) < 4 and not w.isdigit()}
+            if 2 <= len(w) < 4 and not w.isdigit() and w not in _SHORT_SKIP}
 
 
 def keywords(repo):
+    if hasattr(repo, "keywords"):  # a live catalogue picks its own distinctive words
+        return repo.keywords() + BASE_KEYWORDS
     stems = {stem for p in repo.all() for stem in _stems(p)}
     brands = {fold(p["brand"]) for p in repo.all()}
     return sorted(stems | brands) + BASE_KEYWORDS
@@ -92,7 +103,10 @@ def _search(t, repo):
     lo, hi = _price_range(t)
     if not (best or category or brand or color or lo is not None or hi is not None):
         return None
-    if best:
+    if best and category and hasattr(repo, "search_text"):
+        # live titles often lack the category word ("MacBook Pro" is a laptop): take both
+        products = [p for p in products if hits[p["id"]] == best or p["category"] == category]
+    elif best:
         products = [p for p in products if hits[p["id"]] == best]
     elif category:
         products = [p for p in products if p["category"] == category]
@@ -113,6 +127,17 @@ def _wanted(t):
     return " ".join(w for w in re.findall(r"\w+", t) if w not in _FILLER)
 
 
+def _missing_model(t, found):
+    """'iphone18' when the list has iPhone 13 but no 18: the model number the user asked for."""
+    m = re.search(r"([^\W\d_]{3,})\s?(\d{1,3})(?![\d.,])(?!\s*(?:azn|manat|ман|gb|tb|%))", t)
+    if not m or nlp.parse_count(t[m.start():m.end()]):
+        return None
+    names = [fold(p["name"]["en"]) for p in found]
+    if any(m.group(1)[:4] in n for n in names) and not any(re.search(rf"\b{m.group(2)}\b", n) for n in names):
+        return f"{m.group(1)} {m.group(2)}"
+    return None
+
+
 def _not_found(t, repo, lang):
     wanted = _wanted(t)
     groups = ", ".join(sorted({p["category"] for p in repo.all()}))
@@ -129,15 +154,27 @@ def _stock(p, lang):
     return tr(lang, f"in stock: {p['stock']}", f"stokda: {p['stock']} ədəd", f"в наличии: {p['stock']} шт.")
 
 
+def _facts(p, lang):
+    color = f"{p['color']} · " if p["color"] else ""  # the live catalogue has no colour field
+    return f"{money(p['price_azn'])} · ★{p['rating']} · {color}{_stock(p, lang)}"
+
+
 def _line(i, p, lang):
-    return (f"{i}. {p['name'][lang]} — {p['brand']} · {money(p['price_azn'])} · ★{p['rating']} · "
-            f"{p['color']} · {_stock(p, lang)}")
+    return f"{i}. {p['name'][lang]} — {p['brand']} · {_facts(p, lang)}"
+
+
+def _lines(items, lang):
+    text = "\n".join(_line(i, p, lang) for i, p in enumerate(items[:LIMIT], 1))
+    if len(items) > LIMIT:
+        more = len(items) - LIMIT
+        text += "\n" + tr(lang, f"…and {more} more. Add a brand, colour or price to narrow it down.",
+                          f"…və daha {more} məhsul. Marka, rəng və ya qiymət yazın ki, daraldım.",
+                          f"…и ещё {more}. Уточните бренд, цвет или цену.")
+    return text
 
 
 def _details(p, lang):
-    return (f"{p['name'][lang]} — {p['brand']} ({p['category']})\n"
-            f"{money(p['price_azn'])} · ★{p['rating']} · {p['color']} · {_stock(p, lang)}\n"
-            f"{p['description']}")
+    return f"{p['name'][lang]} — {p['brand']} ({p['category']})\n{_facts(p, lang)}\n{p['description']}"
 
 
 def _cart(s, repo):
@@ -198,25 +235,33 @@ def handle(t, s, repo):
                       "Какие товары сравнить?")
         best = max(items, key=lambda p: p["rating"])
         cheapest = min(items, key=lambda p: p["price_azn"])
+        items = items[:LIMIT]
         return "\n".join([_line(i, p, lang) for i, p in enumerate(items, 1)] + [
             tr(lang, f"Cheapest: {cheapest['name'][lang]} · best rated: {best['name'][lang]}",
                f"Ən ucuz: {cheapest['name'][lang]} · ən yüksək reytinq: {best['name'][lang]}",
                f"Дешевле всего: {cheapest['name'][lang]} · лучший рейтинг: {best['name'][lang]}")])
+    if found is None and not (ref or selected or shown) and hasattr(repo, "search_text") and _wanted(t):
+        found = repo.search_text(_wanted(t)) or None  # free text no catalogue word matched: ask the API
     if found is not None:
-        st["results"] = [p["id"] for p in found]
+        st["results"] = [p["id"] for p in found[:LIMIT]]
         st["selected"] = found[0]["id"] if len(found) == 1 else None
         if not found:
             return tr(lang, "Sorry, no products match that.", "Təəssüf, uyğun məhsul tapılmadı.",
                       "К сожалению, подходящих товаров нет.")
+        model = _missing_model(t, found)
+        if model:  # the model's own line first ("iPhone 13 Pro" before "iPhone charger")
+            found = sorted(found, key=lambda p: not fold(p["name"]["en"]).startswith(model.split()[0]))
+            st["results"] = [p["id"] for p in found[:LIMIT]]
+            return tr(lang, f"There is no '{model}' in our catalogue. The closest products:",
+                      f"Kataloqumuzda '{model}' yoxdur. Ən yaxın məhsullar:",
+                      f"«{model}» в нашем каталоге нет. Ближайшие товары:") + "\n" + _lines(found, lang)
         if len(found) == 1:
             return _details(found[0], lang)
-        return tr(lang, "Here is what I found:", "Tapdıqlarım:", "Вот что я нашёл:") + "\n" + \
-            "\n".join(_line(i, p, lang) for i, p in enumerate(found, 1))
+        return tr(lang, "Here is what I found:", "Tapdıqlarım:", "Вот что я нашёл:") + "\n" + _lines(found, lang)
     if ref or selected:
         return _details(ref or selected, lang)
     if shown:  # "back to shopping": the earlier results are still there
-        return tr(lang, "Your earlier results:", "Əvvəlki nəticələr:", "Ваши результаты:") + "\n" + \
-            "\n".join(_line(i, p, lang) for i, p in enumerate(shown, 1))
+        return tr(lang, "Your earlier results:", "Əvvəlki nəticələr:", "Ваши результаты:") + "\n" + _lines(shown, lang)
     missing = _not_found(t, repo, lang)
     if missing:
         return missing

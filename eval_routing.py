@@ -52,6 +52,7 @@ CONVERSATIONS = [
      ("Товары от 300 до 600 манат", "shopping", "Кофемашина")],
     [("Round trip Baku to Istanbul on 6 November, return on 9 November", "flights", "BA221")],
     [("Flights to Paris on Friday", "flights", "no flights for 'paris'")],
+    [("Bakıdan Londona uçuş", "flights", "'london' üçün uçuş yoxdur")],
     [("Any flights to Tbilisi on Saturday?", "flights", "Dates with flights")],
     [("Рейсы из Баку в Ташкент", "flights", "SB610"),
      ("Забронируй его", "follow_up", "FL0001")],

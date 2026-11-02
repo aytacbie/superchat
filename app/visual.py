@@ -115,7 +115,14 @@ def handle_image(image_bytes, s, repo):
     pct = lambda p: f"{round(100 * p)}%"
 
     if best[2] >= CONFIDENT:
-        items = [repo.get(pid) for pid in best[1]]
+        # the mock catalogue lists product ids per class; a live catalogue matches by title words
+        ids = repo.visual_matches(best[0]) if hasattr(repo, "visual_matches") else best[1]
+        items = [p for p in map(repo.get, ids) if p][:shopping.LIMIT]
+        if not items:
+            name = _name(best[0], lang)
+            return tr(lang, f"This looks like {name} (confidence {pct(best[2])}), but we have none in the catalogue.",
+                      f"Bu, {name} kimi görünür (əminlik {pct(best[2])}), amma kataloqumuzda yoxdur.",
+                      f"Похоже, это {name} (уверенность {pct(best[2])}), но в каталоге такого нет.")
         st["results"] = [p["id"] for p in items]
         st["selected"] = items[0]["id"] if len(items) == 1 else None
         name = _name(best[0], lang)
@@ -126,11 +133,13 @@ def handle_image(image_bytes, s, repo):
 
     if best[2] >= POSSIBLE and not (top is not best and top[2] >= CONFIDENT):
         a = _name(best[0], lang)
-        st["results"] = list(best[1])
-        st["selected"] = best[1][0] if len(best[1]) == 1 else None
+        live = hasattr(repo, "visual_matches")
+        first = repo.visual_matches(best[0])[:shopping.LIMIT] if live else list(best[1])
+        st["results"] = first
+        st["selected"] = first[0] if len(first) == 1 else None
         if second[2] >= POSSIBLE / 2:
             b = _name(second[0], lang)
-            st["results"] += list(second[1])
+            st["results"] += repo.visual_matches(second[0])[:shopping.LIMIT] if live else list(second[1])
             st["selected"] = None
             return tr(lang, f"I'm not sure. Is it {a} ({pct(best[2])}) or {b} ({pct(second[2])})?",
                       f"Əmin deyiləm. Bu {a} ({pct(best[2])}), yoxsa {b} ({pct(second[2])})?",

@@ -16,6 +16,7 @@ def build(mode=None):
         return repos
     nlp.TODAY = nlp.baku_today()
     from .cinemaplus import CinemaPlusRepository
+    from .dummyjson import DummyJsonRepository
     from .travelpayouts import TravelpayoutsRepository
 
     try:
@@ -25,6 +26,12 @@ def build(mode=None):
         threading.Thread(target=cinema.preload, daemon=True).start()  # rest of the week, genres, runtimes
     except DataSourceError as e:
         log.warning("cinema: using mock data (%s)", e)
+    try:
+        shop = DummyJsonRepository()
+        shop.all()  # the whole catalogue (four pages); fails fast if the API is down
+        repos["shopping"] = shop
+    except DataSourceError as e:
+        log.warning("shopping: using mock data (%s)", e)
     try:
         repos["flights"] = TravelpayoutsRepository(config.TRAVELPAYOUTS_TOKEN)
     except DataSourceError as e:

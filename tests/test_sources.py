@@ -18,6 +18,7 @@ from app import nlp  # noqa: E402
 from app.apiclient import ApiClient  # noqa: E402
 from app.repositories import DataSourceError  # noqa: E402
 from app.sources.cinemaplus import CinemaPlusRepository  # noqa: E402
+from app.sources.dummyjson import DummyJsonRepository  # noqa: E402
 from app.sources.travelpayouts import TravelpayoutsRepository  # noqa: E402
 
 
@@ -151,7 +152,11 @@ class CinemaPlusTest(unittest.TestCase):
 
 
 CITIES_EN = [{"code": "BAK", "name": "Baku", "time_zone": "Asia/Baku", "has_flightable_airport": True, "cases": {}},
+             {"code": "YXU", "name": "London", "time_zone": "America/Toronto", "has_flightable_airport": True},
+             {"code": "LON", "name": "London", "time_zone": "Europe/London", "has_flightable_airport": True},
              {"code": "PAR", "name": "Paris", "time_zone": "Europe/Paris", "has_flightable_airport": True, "cases": {}}]
+AIRPORTS = [{"code": c, "city_code": city, "flightable": True}
+            for c, city in [("GYD", "BAK"), ("CDG", "PAR"), ("ORY", "PAR"), ("YXU", "YXU"), ("LHR", "LON"), ("STN", "LON")]]
 CITIES_RU = [{"code": "BAK", "name": "Баку", "has_flightable_airport": True, "cases": {"vi": "в Баку"}},
              {"code": "PAR", "name": "Париж", "has_flightable_airport": True, "cases": {"vi": "в Париж", "ro": "Парижа"}}]
 TICKET = {"origin": "BAK", "destination": "PAR", "origin_airport": "GYD", "destination_airport": "CDG",
@@ -165,6 +170,8 @@ def aviasales_handler(request):
         return httpx.Response(200, json=CITIES_EN)
     if path == "/data/ru/cities.json":
         return httpx.Response(200, json=CITIES_RU)
+    if path == "/data/en/airports.json":
+        return httpx.Response(200, json=AIRPORTS)
     if path == "/data/en/airlines.json":
         return httpx.Response(200, json=[{"code": "J2", "name": "Azerbaijan Airlines"}])
     if path == "/aviasales/v3/prices_for_dates":
@@ -207,10 +214,59 @@ class TravelpayoutsTest(unittest.TestCase):
         self.assertEqual(self.repo.resolve_city("Parisə"), "PAR")
         self.assertEqual(self.repo.resolve_city("Парижа"), "PAR")
         self.assertIsNone(self.repo.resolve_city("Atlantis"))
+        self.assertEqual(self.repo.resolve_city("Londona"), "LON")  # London UK, not London, Ontario
+        self.assertEqual(self.repo.city_name("CDG"), "Paris")  # airport codes show their city
 
     def test_missing_token_is_rejected(self):
         with self.assertRaises(DataSourceError):
             TravelpayoutsRepository("")
+
+
+PRODUCTS = [{"id": i, "title": t, "brand": b, "category": c, "price": pr, "rating": 4.12, "stock": st,
+             "description": "d", "tags": tags}
+            for i, (t, b, c, pr, st, tags) in enumerate([
+                ("iPhone 13 Pro", "Apple", "smartphones", 1099.99, 56, ["smartphones"]),
+                ("iPhone 5s", "Apple", "smartphones", 199.99, 0, []),
+                ("Apple iPhone Charger", "Apple", "mobile-accessories", 19.99, 31, []),
+                ("Black Sun Glasses", "Fashion Shades", "sunglasses", 29.99, 60, ["black"])], 1)]
+
+
+def dummyjson_handler(request):
+    if request.url.path == "/products":
+        skip, limit = int(request.url.params["skip"]), int(request.url.params["limit"])
+        return httpx.Response(200, json={"products": PRODUCTS[skip:skip + limit], "total": len(PRODUCTS)})
+    if request.url.path == "/products/search":
+        q = request.url.params["q"].lower()
+        return httpx.Response(200, json={"products": [p for p in PRODUCTS if q in p["title"].lower()]})
+    return httpx.Response(404)
+
+
+class DummyJsonTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = DummyJsonRepository(client(dummyjson_handler))
+
+    def test_catalogue_is_paged_and_mapped(self):
+        import app.sources.dummyjson as dj
+        dj.PAGE_SIZE, old = 3, dj.PAGE_SIZE  # force two pages
+        try:
+            items = self.repo.all()
+        finally:
+            dj.PAGE_SIZE = old
+        self.assertEqual(len(items), 4)
+        phone = self.repo.get("DJ1")
+        self.assertEqual((phone["category"], phone["price_azn"], phone["rating"]), ("phones", 1869.98, 4.1))
+        self.assertEqual(self.repo.get("DJ4")["color"], "black")
+        self.assertIsNone(phone["color"])
+
+    def test_missing_model_names_the_closest_products(self):
+        from app import shopping
+        from app.main import new_session
+        s = new_session()
+        s["lang"] = "az"
+        reply = shopping.handle(nlp.fold("Salam mənə iphone18 lazımdı"), s, self.repo)
+        self.assertIn("'iphone 18' yoxdur", reply)
+        self.assertLess(reply.index("iPhone 13 Pro"), reply.index("Charger"))  # phones before accessories
+        self.assertNotIn("None", reply)
 
 
 if __name__ == "__main__":

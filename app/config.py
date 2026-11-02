@@ -1,6 +1,7 @@
 """Settings from environment variables, optionally loaded from a .env file in the project root.
 
-SUPERCHAT_DATA        live (default) or mock. Live uses the real APIs and falls back to the mock
+SUPERCHAT_DATA        mock (default) or live. Mock is the official dataset and needs no internet
+                      (brief, section 8). Live is Phase 2: the real APIs, falling back to the mock
                       dataset for a domain whose API is not configured or not reachable at start-up.
 TRAVELPAYOUTS_TOKEN   Aviasales (Travelpayouts) Data API token; free at travelpayouts.com.
 USD_TO_AZN            Exchange rate for prices quoted in USD (the manat is pegged at 1.70)."""
@@ -23,6 +24,6 @@ def _load_env_file():
 
 _load_env_file()
 
-DATA_MODE = os.environ.get("SUPERCHAT_DATA", "live").lower()
+DATA_MODE = os.environ.get("SUPERCHAT_DATA", "mock").lower()
 TRAVELPAYOUTS_TOKEN = os.environ.get("TRAVELPAYOUTS_TOKEN", "")
 USD_TO_AZN = float(os.environ.get("USD_TO_AZN", "1.70"))

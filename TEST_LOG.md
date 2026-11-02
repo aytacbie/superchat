@@ -2,7 +2,7 @@
 
 **Command:** `python eval_routing.py` (add `-v` to print every reply)
 **Data:** official mock dataset. Reference date: Monday, 2 November 2026.
-**Test set:** 48 scripted conversations with 122 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
+**Test set:** 49 scripted conversations with 123 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
 
 Each turn is checked twice:
 1. **Routing:** the category the router picks must equal the expected category.
@@ -12,12 +12,12 @@ Each turn is checked twice:
 
 | Metric | Result |
 |---|---|
-| Routing accuracy | **122 / 122 = 100.0 %** |
-| Answer checks | **113 / 113 = 100.0 %** |
+| Routing accuracy | **123 / 123 = 100.0 %** |
+| Answer checks | **114 / 114 = 100.0 %** |
 
 | Category | Correct / total |
 |---|---|
-| flights | 21 / 21 |
+| flights | 22 / 22 |
 | shopping | 25 / 25 |
 | cinema | 25 / 25 |
 | mixed | 4 / 4 |
@@ -51,8 +51,11 @@ The final score comes after fixing the errors that the test set found during dev
 ## Phase 2 additions
 
 - **Free-text product requests.** The mentor's example "Salam mənə iphone18 lazımdı" was answered with the greeting, because no catalogue word matched. The router now treats a wish to buy ("lazımdır", "need", "купить", "нужен") as shopping, and the Shopping module names the missing item: "'iphone 18' kataloqumuzda yoxdur" and lists the categories it does have. Three turns were added for this (AZ, EN, RU).
-- **Data layer tests:** `python -m unittest discover tests`, 15 tests, all passing, no network needed. They cover the HTTP client (cache hits, retry on 5xx, 429 with Retry-After, no retry on 401, timeouts, circuit breaker, auth parameters, one provider call for concurrent identical requests). They also cover the CinemaPlus mapping (schedule, Azerbaijani aliases, lazy genre and runtime, seat count, seat hold), the Aviasales mapping (USD→AZN, local arrival time across time zones, EN/AZ/RU city names, buy link) and one full Flights conversation on live-shaped data.
+- **Azerbaijani city endings.** "Bakıdan Londona uçuş" listed every destination, because "Londona" was not recognised as a place. In Azerbaijani messages a word with a from/to ending is now checked as a city. The mock data answers "'london' üçün uçuş yoxdur", and the live source finds London. One turn was added. The first version also applied the rule to English words ("compare" was read as a city) and broke 9 answer checks; it is now limited to Azerbaijani messages.
+- **Data layer tests:** `python -m unittest discover tests`, 17 tests, all passing, no network needed. They cover the HTTP client (cache hits, retry on 5xx, 429 with Retry-After, no retry on 401, timeouts, circuit breaker, auth parameters, one provider call for concurrent identical requests). They also cover the CinemaPlus mapping (schedule, Azerbaijani aliases, lazy genre and runtime, seat count, seat hold), the Aviasales mapping (USD→AZN, local arrival time across time zones, EN/AZ/RU city names, buy link) one full Flights conversation on live-shaped data, and the DummyJSON mapping: paging, USD→AZN, colour from the title, and "iphone18" listing iPhones before accessories.
 - **Live check (manual, 2 Nov 2026, against cinemaplus.az):** "What is playing tonight?", "the second one", "book 2 seats for it", "Bu axşam Ganjlik Mall-da nə var?", "Odisseya filmi sabah var?", "Comedy films tomorrow", "Russian films on Wednesday at 28 Mall". All were routed to Cinema and answered from the real schedule with real free-seat counts. Replies take 1–4 s once the background warm-up has finished, because the site itself takes 1–3 s per request.
+- **Live check (manual, 3 Nov 2026, Aviasales Data API):** "Flights from Baku to Istanbul on Friday", "Bakıdan Londona uçuş" → "birbaşa olanlar" → "ən ucuzunu bron et", "Рейсы из Баку в Париж" and "Uçuş Bakı Tbilisi sabah" all returned real fares (AZAL, Wizz Air, Pegasus, Turkish Airlines, Ajet) with working Aviasales links. Two bugs were found and fixed. "London" first resolved to London, Ontario; same-name cities now prefer the one with the most airports. Airport codes (GYD, SVO) were shown instead of city names; airports.json now maps them to cities. A third bug, older than Phase 2, also showed up: a filter that matched nothing ("birbaşa olanlar" when no flight is direct) wiped the list, so "book the cheapest" lost its context. The earlier list is now kept.
+- **Live check (manual, 3 Nov 2026, DummyJSON):** "Salam mənə iphone18 lazımdı" → "birincini səbətə əlavə et", "Show me laptops" → "compare the first and the second", "Do you have sunglasses?" → "the cheapest one, is it in stock?", "Smartfonlar 500 AZN-dən ucuz", "Apple watch var?" and the brief's mixed sample "a flight to Istanbul on 6 November and a backpack" (real Aviasales fare plus a real backpack). Two bugs were found and fixed. Short words in product names ("Green **and** Black Glasses", "CK **One**") matched the same words in messages, so "compare the first and the second" listed a lotion; such words no longer count as model names. "Show me laptops" found only the 2 of 5 laptops with "Laptop" in the title; with the live catalogue, products from the matching category are now included too.
 
 # Bonus: visual search test
 

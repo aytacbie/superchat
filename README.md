@@ -2,7 +2,14 @@
 
 One chat for flights ✈️, shopping 🛒 and cinema 🎬. It works in English, Azerbaijani and Russian.
 
-**Data (Phase 2):** cinema uses the real CinemaPlus schedule, prices and free seats from cinemaplus.az, with no key needed. Flights use real Aviasales prices through the free Travelpayouts Data API (token in `.env`). Shopping uses the official mock dataset for now. Any domain whose live source is not configured or not reachable falls back to the mock dataset (reference date: Monday, 2 November 2026). A green dot on a domain chip in the UI means live data.
+**Data.** By default SuperChat runs on the official mock dataset (reference date: Monday, 2 November 2026) and needs no internet, as section 8 of the brief requires.
+
+**Phase 2 (real data)** is switched on with `SUPERCHAT_DATA=live` in `.env`:
+- Cinema uses the real CinemaPlus schedule, prices and free seats from cinemaplus.az. No key is needed.
+- Flights use real Aviasales fares through the free Travelpayouts Data API. A token is needed.
+- Shopping uses DummyJSON, a free public product API with no key. It stands in for the Shopping Assistant backend, which the organisers have not provided. Prices are converted from USD.
+
+A domain whose live source is not configured or not reachable falls back to the mock dataset. A green dot on a domain chip in the UI means live data.
 
 Bonus features: **search by photo** (📎) and **hands-free voice input** (🎤, with optional spoken replies 🔊).
 
@@ -11,7 +18,7 @@ Bonus features: **search by photo** (📎) and **hands-free voice input** (🎤,
 ```bash
 pip install -r requirements.txt
 python scripts/download_model.py   # once: the 90 MB CLIP model for photo search
-cp .env.example .env               # optional: add TRAVELPAYOUTS_TOKEN for real flights
+cp .env.example .env               # optional: Phase 2 real data (add TRAVELPAYOUTS_TOKEN for flights)
 uvicorn app.main:app
 ```
 
@@ -19,13 +26,13 @@ Then open http://127.0.0.1:8000. Voice input needs Chrome, Edge or Safari. `http
 
 **Flights token (free):** sign up at [travelpayouts.com](https://www.travelpayouts.com), open *Profile → API token*, and put it in `.env` as `TRAVELPAYOUTS_TOKEN=...`. No payment is needed.
 
-`SUPERCHAT_DATA=mock` forces the official dataset for every domain, for example to run the demo offline.
+Without `.env`, or with `SUPERCHAT_DATA=mock`, every domain uses the official dataset. The brief's sample conversations ("Orbit Zero", "CA101", "Laptop 15 Pro") are written for this dataset.
 
 ## Routing tests
 
 ```bash
 python eval_routing.py                                 # routing on the mock dataset, add -v to print every reply
-python -m unittest discover tests                      # data layer: HTTP client, CinemaPlus and Aviasales mapping (offline)
+python -m unittest discover tests                      # data layer: HTTP client and the three live mappings (offline)
 python eval_visual.py ../visual-search/data/images     # photo search, needs the photo folder
 ```
 
@@ -34,7 +41,7 @@ Results and error analysis are in [TEST_LOG.md](TEST_LOG.md). Architecture, rout
 ## Structure
 
 - `app/repositories.py`: mock data layer (`FlightRepository`, `ProductRepository`, `ShowtimeRepository`).
-- `app/sources/`: live repositories with the same methods. `cinemaplus.py` reads cinemaplus.az; `travelpayouts.py` reads the Aviasales Data API. `__init__.py` picks live or mock per domain.
+- `app/sources/`: live repositories with the same methods. `cinemaplus.py` reads cinemaplus.az; `travelpayouts.py` reads the Aviasales Data API; `dummyjson.py` reads the DummyJSON product API. `__init__.py` picks live or mock per domain.
 - `app/apiclient.py`: the shared HTTP client for Phase 2: auth, rate limiting, retries, caching, a circuit breaker and request logging.
 - `app/config.py`: settings from the environment or `.env`.
 - `app/router.py`: a rule-based router. Each message is classified as flights, shopping, cinema, mixed, follow-up, ambiguous or out of scope.

@@ -19,6 +19,7 @@ COMPARE = ["compare", "comparison", "difference", "vs$", "versus", "muqayise", "
 FAST = ["fastest", "quickest", "shortest", "en qisa", "en tez", "быстр", "самый короткий"]
 SORT = ["sort", "order by", "sirala", "сортир", "упорядоч"]
 RETURN = ["return", "coming back", "back on", "geri qayit", "qayidis", "обратно", "обратный"]  # date after it is the return
+LIMIT = 10  # longer lists (all destinations, a whole month of live fares) are cut with a hint
 _ABLATIVE = ("dan", "den", "ndan", "nden", "tan", "ten")
 _DATIVE = ("a", "e", "ya", "ye", "na", "ne")
 
@@ -92,15 +93,28 @@ def live_route(t, repo, origin, dest):
     return origin, dest
 
 
-def unknown_place(t, repo=None):
-    """A place after 'to'/'from'/'в'/'из' that is not in our route network, e.g. 'to Paris'."""
+_AZ_COMMON = {"sonra", "hansina", "haraya", "buraya", "oraya", "evvel", "qeder", "gore", "mene", "sene", "bize"}
+
+
+_AZ_ENDINGS = ("ndan", "nden", "dan", "den", "tan", "ten", "ya", "ye", "a", "e")  # longest first
+
+
+def unknown_place(t, repo=None, lang="en"):
+    """A place outside our route network: after 'to'/'from'/'в'/'из' ('to Paris'), or, in an
+    Azerbaijani message, a word with a from/to ending ('Londona'). The live source checks its
+    city list first."""
     resolve = getattr(repo, "resolve_city", None)
-    for m in re.finditer(r"(?<!\w)(?:to|from|в|во|из)\s+(\w+)", t):
-        word = m.group(1)
-        if word in _NOT_PLACES or word.isdigit() or nlp.parse_date(word):
+    known = sum(CITY_ALIASES.values(), [])
+    words = [(m.group(1), m.group(1)) for m in re.finditer(r"(?<!\w)(?:to|from|в|во|из)\s+(\w+)", t)]
+    for w in re.findall(r"[a-z]{5,}", t) if lang == "az" else []:
+        ending = next((e for e in _AZ_ENDINGS if w.endswith(e)), None)
+        if ending and w not in _AZ_COMMON and not find(w, BASE_KEYWORDS + nlp.CHEAP):
+            words.append((w, w[:-len(ending)]))  # "londona" is reported as "london"
+    for word, shown in words:
+        if word in _NOT_PLACES or word.isdigit() or nlp.parse_date(word) or find(word, known):
             continue
-        if not find(word, sum(CITY_ALIASES.values(), [])) and not (resolve and resolve(word)):
-            return word
+        if not (resolve and resolve(word)):
+            return shown
     return None
 
 
@@ -165,7 +179,12 @@ def _has_filters(t, repo):
 
 
 def _show(items, lang, repo, header):
-    lines = [_line(i, f, lang, repo) for i, f in enumerate(items, 1)]
+    lines = [_line(i, f, lang, repo) for i, f in enumerate(items[:LIMIT], 1)]
+    if len(items) > LIMIT:
+        more = len(items) - LIMIT
+        lines.append(tr(lang, f"…and {more} more. Add a date or 'direct' to narrow it down.",
+                        f"…və daha {more} reys. Daraltmaq üçün tarix və ya 'birbaşa' yazın.",
+                        f"…и ещё {more}. Укажите дату или «прямой», чтобы сузить."))
     return header + "\n" + "\n".join(lines)
 
 
@@ -184,7 +203,7 @@ def _search(t, s, repo, origin, dest, day, return_day=None):
     back = []
     if return_day and params.get("dest"):
         back = _filter(t, repo.search(params["dest"], params["origin"], return_day), repo)
-    st["results"] = [f["id"] for f in items + back]
+    st["results"] = [f["id"] for f in items[:LIMIT] + back]  # what "the first one" can refer to
     st["selected"] = items[0]["id"] if len(items) == 1 and not back else None
     if return_day and params.get("dest"):
         back_route = f"{_city(repo, params['dest'])} → {_city(repo, params['origin'])}, {fmt_day(return_day, lang)}"
@@ -193,7 +212,7 @@ def _search(t, s, repo, origin, dest, day, return_day=None):
             tr(lang, f"No outbound flights {route}{when}.", f"Gediş uçuşu yoxdur: {route}{when}.",
                f"Рейсов туда нет: {route}{when}.")
         if back:
-            lines = [_line(i, f, lang, repo) for i, f in enumerate(back, len(items) + 1)]
+            lines = [_line(i, f, lang, repo) for i, f in enumerate(back, len(items[:LIMIT]) + 1)]
             ret = tr(lang, f"Return {back_route}:", f"Qayıdış {back_route}:", f"Обратно {back_route}:") + \
                 "\n" + "\n".join(lines)
         else:
@@ -266,7 +285,7 @@ def handle(t, s, repo):
     split = min([t.find(key) for key in RETURN if find(t, [key])] or [len(t)])  # "... and back on 9 Nov"
     day = nlp.parse_date(t[:split])
     return_day = nlp.parse_date(t[split:]) if split < len(t) else None
-    place = None if (origin and dest) else unknown_place(t, repo)
+    place = None if (origin and dest) else unknown_place(t, repo, lang)
     if place and hasattr(repo, "resolve_city"):
         return tr(lang, f"Sorry, I could not find a city called '{place}'. Please check the spelling.",
                   f"Təəssüf, '{place}' adlı şəhər tapmadım. Yazılışı yoxlayın.",
@@ -307,10 +326,10 @@ def handle(t, s, repo):
         return _details(t, ref, lang, repo)
     if shown and _has_filters(t, repo):
         items = _filter(t, shown, repo)
-        st["results"] = [f["id"] for f in items]
-        if not items:
+        if not items:  # keep the earlier list, so "book the cheapest" still has something to refer to
             return tr(lang, "None of those flights match.", "Bu uçuşlardan heç biri uyğun gəlmir.",
                       "Ни один из этих рейсов не подходит.")
+        st["results"] = [f["id"] for f in items[:LIMIT]]
         return _show(items, lang, repo, tr(lang, "Matching flights:", "Uyğun uçuşlar:", "Подходящие рейсы:"))
     if selected:
         return _details(t, selected, lang, repo)

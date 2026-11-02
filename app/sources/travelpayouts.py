@@ -1,9 +1,11 @@
 """Aviasales live data through the Travelpayouts Data API (free, needs a token).
 
-- Prices: /aviasales/v3/prices_for_dates, the cheapest tickets Aviasales users found recently
-  for a route and date. Results are paged (limit/page) and cached for 15 minutes.
-- Reference data (no token needed): cities.json in English and Russian, airlines.json. The
-  cities give IATA codes for any city the user names and time zones for local arrival times.
+- Prices: /aviasales/v3/prices_for_dates, the cheapest ticket per day that Aviasales users found
+  recently for a route. Results are paged (limit/page) and cached for 15 minutes. Without a
+  date the current and next month are asked, so the reply shows the coming weeks.
+- Reference data (no token needed): cities.json in English and Russian, airports.json and
+  airlines.json. They give IATA codes for any city the user names, the city of each airport
+  and time zones for local arrival times.
 
 Records are mapped to the mock flight schema. The Data API does not report baggage or seats
 left, so those fields are None and the Flights module says so instead of guessing. Booking
@@ -20,7 +22,7 @@ log = logging.getLogger("superchat.travelpayouts")
 PAGE_SIZE = 30
 MAX_PAGES = 2
 # The mock data uses airport codes; the API searches better with metropolitan city codes.
-CITY_CODES = {"SVO": "MOW"}
+CITY_CODES = {"SVO": "MOW", "GYD": "BAK"}
 _AZ_SUFFIXES = ("ndan", "nden", "dan", "den", "tan", "ten", "ya", "ye", "na", "ne", "a", "e")
 
 
@@ -36,15 +38,20 @@ class TravelpayoutsRepository:
                                              min_interval=0.1, timeout=30)
         self._items = {}
         self.reservations = []
-        self._cities = self._names = self._airlines = None
+        self._cities = self._names = self._airlines = self._airports = None
 
     # ---------- reference data ----------
 
     def _reference(self):
         if self._cities is not None:
             return
-        cities = {}
-        names = {}
+        airports, size = {}, {}
+        for a in self.data.get_json("/data/en/airports.json", ttl=24 * 3600):
+            if a.get("code") and a.get("city_code"):
+                airports[a["code"]] = a["city_code"]
+                if a.get("flightable"):
+                    size[a["city_code"]] = size.get(a["city_code"], 0) + 1
+        cities, names = {}, {}
         for lang in ("en", "ru"):
             for c in self.data.get_json(f"/data/{lang}/cities.json", ttl=24 * 3600):
                 if not c.get("has_flightable_airport") or not c.get("code"):
@@ -55,10 +62,12 @@ class TravelpayoutsRepository:
                 forms = [c.get("name") or ""] + [v.removeprefix("в ").removeprefix("во ")
                                                  for v in (c.get("cases") or {}).values() if v]
                 for form in forms:
-                    names.setdefault(nlp.fold(form).strip(), c["code"])  # first (main) city wins on clashes
+                    names.setdefault(nlp.fold(form).strip(), set()).add(c["code"])
+        # Several cities share a name (London UK / London, Ontario): take the one with most airports.
+        names = {name: max(codes, key=lambda code: (size.get(code, 0), code)) for name, codes in names.items()}
         airlines = {a["code"]: a.get("name") or a["code"]
                     for a in self.data.get_json("/data/en/airlines.json", ttl=24 * 3600) if a.get("code")}
-        self._cities, self._names, self._airlines = cities, names, airlines
+        self._cities, self._names, self._airlines, self._airports = cities, names, airlines, airports
 
     def resolve_city(self, word):
         """IATA city code for a city name in English or Russian, or Azerbaijani with a case ending
@@ -74,8 +83,10 @@ class TravelpayoutsRepository:
         return None
 
     def city_name(self, code):
+        """City for a city or airport code: 'LON' and 'STN' are both London."""
         self._reference()
-        return self._cities.get(code, {}).get("city", code)
+        city = self._airports.get(code, code)
+        return self._cities.get(city, {}).get("city", code)
 
     # ---------- mapping ----------
 
@@ -125,7 +136,24 @@ class TravelpayoutsRepository:
         if destination:
             params["destination"] = CITY_CODES.get(destination, destination)
         if date:
-            params["departure_at"] = date
+            months = [date]
+        else:  # no date: this month and the next, rather than the cheapest fares months away
+            first = nlp.TODAY.replace(day=1)
+            months = [f"{first:%Y-%m}", f"{(first + timedelta(days=32)):%Y-%m}"]
+        found = []
+        for month in months:
+            found += self._pages({**params, "departure_at": month})
+        if date:
+            found = [f for f in found if f["departure_local"].startswith(date)]
+        else:
+            found = [f for f in found if f["departure_local"] >= nlp.TODAY.isoformat()]
+        unique = {}
+        for f in found:
+            unique.setdefault(f["id"], f)
+        self._items.update(unique)
+        return list(unique.values())
+
+    def _pages(self, params):
         found = []
         for page in range(1, MAX_PAGES + 1):
             body = self.api.get_json("/aviasales/v3/prices_for_dates", {**params, "page": page}, ttl=900)
@@ -139,13 +167,7 @@ class TravelpayoutsRepository:
                     log.warning("skipped malformed ticket: %s", row)
             if len(rows) < PAGE_SIZE:
                 break
-        if date:
-            found = [f for f in found if f["departure_local"].startswith(date)]
-        unique = {}
-        for f in found:
-            unique.setdefault(f["id"], f)
-        self._items.update(unique)
-        return list(unique.values())
+        return found
 
     def reserve(self, flight_id, passengers=1):
         f = self.get(flight_id)
