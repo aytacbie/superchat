@@ -1,0 +1,200 @@
+"""Shopping module: product search, details, comparison, stock and cart."""
+import re
+
+from . import nlp
+from .nlp import find, fold, money, tr
+
+CATEGORIES = {
+    "audio": ["headphone", "earphone", "earbud", "speaker", "audio", "qulaqliq", "qulaqciq", "dinamik",
+              "наушник", "колонк"],
+    "computers": ["laptop", "notebook", "computer", "noutbuk", "kompyuter", "ноутбук", "компьютер"],
+    "phones": ["phone", "smartphone", "telefon", "smartfon", "телефон", "смартфон"],
+    "wearables": ["smartwatch", "smart watch", "agilli saat", "умные час", "часы$"],
+    "sport": ["shoe", "sneaker", "ayaqqabi", "кроссовк", "обув"],
+    "accessories": ["backpack", "bag$", "bags$", "canta", "рюкзак", "сумк"],
+    "home": ["coffee", "qehve", "кофе"],
+    "gifts": ["board game", "gift", "game$", "games$", "oyun", "hediyye", "игра$", "игру$", "игры$",
+              "настольн", "подар"],
+}
+COLORS = {
+    "black": ["black", "qara", "черн"],
+    "white": ["white", "ag$", "бел"],
+    "silver": ["silver", "gumus", "серебр"],
+    "grey": ["grey", "gray", "boz$", "серый", "серого", "серые"],
+    "blue": ["blue", "mavi", "goy$", "син"],
+}
+ADD = ["add", "put", "elave", "добав", "положи"]
+REMOVE = ["remove", "delete", "take out", "sil$", "silin", "cixar", "удал", "убер"]
+CART = ["cart", "basket", "sebet", "корзин"]
+STOCK = ["stock", "stok", "налич"]
+COMPARE = ["compare", "comparison", "difference", "vs$", "versus", "muqayise", "ferq", "сравн", "разниц"]
+_SKIP = {"saat", "dest", "speak", "lite", "pro"}
+
+
+def _stems(p):
+    """Word stems from a product's names in all three languages ('headphones' -> 'headphon')."""
+    out = set()
+    for name in p["name"].values():
+        for w in re.findall(r"\w+", fold(name)):
+            if len(w) >= 4 and not w.isdigit():
+                stem = w[:max(4, len(w) - 2)]
+                if stem not in _SKIP:
+                    out.add(stem)
+    return out
+
+
+def _short_names(p):
+    """Short model words such as 'Pro', 'Air', 'X5' that only count as whole words."""
+    return {w + "$" for name in p["name"].values() for w in re.findall(r"\w+", fold(name))
+            if 2 <= len(w) < 4 and not w.isdigit()}
+
+
+def keywords(repo):
+    stems = {stem for p in repo.all() for stem in _stems(p)}
+    brands = {fold(p["brand"]) for p in repo.all()}
+    return sorted(stems | brands) + sum(CATEGORIES.values(), []) + sum(COLORS.values(), []) + CART + STOCK + [
+        "shop", "product", "mehsul", "magaza", "alis-veris", "товар", "магазин", "покупк"]
+
+
+def _price_range(t):
+    m = (re.search(r"(?:between|arasi|от)?\s*(\d+(?:[.,]\d+)?)\s*(?:azn|manat)?\s*(?:and|-|–|to|ile|до)\s*"
+                   r"(\d+(?:[.,]\d+)?)\s*(?:azn|manat|ман)", t)
+         or re.search(r"between\s*(\d+(?:[.,]\d+)?)\s*and\s*(\d+(?:[.,]\d+)?)", t))
+    if m:  # "between 50 and 100 AZN", "50-100 AZN", "от 50 до 100 манат", "50 ilə 100 manat"
+        return float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", "."))
+    lo = hi = None
+    m = (re.search(r"(?:under|below|less than|up to|max|cheaper than|within|до|дешевле|меньше|не дороже)"
+                   r"\s*(\d+(?:[.,]\d+)?)", t)
+         or re.search(r"(\d+(?:[.,]\d+)?)\s*(?:azn|manat)?[\w-]*\s+(?:ucuz|asagi|qeder)", t))
+    if m:
+        hi = float(m.group(1).replace(",", "."))
+    m = (re.search(r"(?:over|above|more than|from|от|дороже|больше)\s*(\d+(?:[.,]\d+)?)", t)
+         or re.search(r"(\d+(?:[.,]\d+)?)\s*(?:azn|manat)?[\w-]*\s+(?:baha|yuxari)", t))
+    if m:
+        lo = float(m.group(1).replace(",", "."))
+    return lo, hi
+
+
+def _search(t, repo):
+    """Products matching the message, or None if the message names no product criteria."""
+    products = repo.all()
+    hits = {p["id"]: sum(1 for key in _stems(p) | _short_names(p) if find(t, [key])) for p in products}
+    best = max(hits.values())
+    category = next((c for c, keys in CATEGORIES.items() if find(t, keys)), None)
+    brand = next((p["brand"] for p in products if find(t, [fold(p["brand"])])), None)
+    color = next((c for c, keys in COLORS.items() if find(t, keys)), None)
+    lo, hi = _price_range(t)
+    if not (best or category or brand or color or lo is not None or hi is not None):
+        return None
+    if best:
+        products = [p for p in products if hits[p["id"]] == best]
+    elif category:
+        products = [p for p in products if p["category"] == category]
+    if brand:
+        products = [p for p in products if p["brand"] == brand]
+    if color:
+        products = [p for p in products if p["color"] == color]
+    if lo is not None:
+        products = [p for p in products if p["price_azn"] >= lo]
+    if hi is not None:
+        products = [p for p in products if p["price_azn"] <= hi]
+    return sorted(products, key=lambda p: p["price_azn"])
+
+
+def _stock(p, lang):
+    if p["stock"] == 0:
+        return tr(lang, "out of stock", "stokda yoxdur", "нет в наличии")
+    return tr(lang, f"in stock: {p['stock']}", f"stokda: {p['stock']} ədəd", f"в наличии: {p['stock']} шт.")
+
+
+def _line(i, p, lang):
+    return (f"{i}. {p['name'][lang]} — {p['brand']} · {money(p['price_azn'])} · ★{p['rating']} · "
+            f"{p['color']} · {_stock(p, lang)}")
+
+
+def _details(p, lang):
+    return (f"{p['name'][lang]} — {p['brand']} ({p['category']})\n"
+            f"{money(p['price_azn'])} · ★{p['rating']} · {p['color']} · {_stock(p, lang)}\n"
+            f"{p['description']}")
+
+
+def _cart(s, repo):
+    lang, cart = s["lang"], s["shopping"]["cart"]
+    if not cart:
+        return tr(lang, "Your cart is empty.", "Səbətiniz boşdur.", "Корзина пуста.")
+    lines, total = [], 0
+    for pid, qty in cart.items():
+        p = repo.get(pid)
+        total += p["price_azn"] * qty
+        lines.append(f"• {p['name'][lang]} × {qty} — {money(p['price_azn'] * qty)}")
+    lines.append(tr(lang, f"Total: {money(total)}", f"Cəmi: {money(total)}", f"Итого: {money(total)}"))
+    return tr(lang, "Your cart:", "Səbətiniz:", "Ваша корзина:") + "\n" + "\n".join(lines)
+
+
+def handle(t, s, repo):
+    lang, st = s["lang"], s["shopping"]
+    shown = [repo.get(i) for i in st["results"]]
+    found = _search(t, repo)
+    ref = nlp.pick(t, shown, name=lambda p: " ".join(p["name"].values())) if found is None else None
+    if ref:
+        st["selected"] = ref["id"]
+    selected = repo.get(st["selected"]) if st["selected"] else None
+    target = ref or (found[0] if found and len(found) == 1 else None)
+
+    if find(t, REMOVE):
+        cart = st["cart"]
+        target = target or (repo.get(next(iter(cart))) if len(cart) == 1 else None)
+        if target is None or target["id"] not in cart:
+            return tr(lang, "Which item should I remove?", "Hansı məhsulu silim?", "Какой товар удалить?") \
+                + "\n" + _cart(s, repo)
+        del cart[target["id"]]
+        return tr(lang, f"Removed {target['name'][lang]}.", f"{target['name'][lang]} silindi.",
+                  f"{target['name'][lang]} удалён.") + "\n" + _cart(s, repo)
+    if find(t, ADD):
+        target = target or selected
+        if target is None:
+            return tr(lang, "Which product should I add? For example: 'add the first one'.",
+                      "Hansı məhsulu əlavə edim? Məsələn: 'birincini əlavə et'.",
+                      "Какой товар добавить? Например: «добавь первый».")
+        digit = re.search(r"(?<![\w.,:])([1-9])(?![\w.,:])", t)  # "add 2 board games"
+        qty = nlp.parse_count(t) or (int(digit.group(1)) if digit else 1)
+        if target["stock"] < st["cart"].get(target["id"], 0) + qty:
+            return tr(lang, f"Sorry, only {target['stock']} of {target['name'][lang]} in stock.",
+                      f"Təəssüf, {target['name'][lang]} stokda cəmi {target['stock']} ədəddir.",
+                      f"К сожалению, в наличии только {target['stock']} шт. {target['name'][lang]}.")
+        st["cart"][target["id"]] = st["cart"].get(target["id"], 0) + qty
+        st["selected"] = target["id"]
+        return tr(lang, f"Added {target['name'][lang]} × {qty}.", f"{target['name'][lang]} × {qty} əlavə edildi.",
+                  f"Добавлено: {target['name'][lang]} × {qty}.") + "\n" + _cart(s, repo)
+    if find(t, CART):
+        return _cart(s, repo)
+    if find(t, COMPARE):
+        chosen = nlp.pick_many(t, shown)
+        items = found if found and len(found) >= 2 else (chosen if len(chosen) >= 2 else shown)
+        if len(items) < 2:
+            return tr(lang, "Which products should I compare?", "Hansı məhsulları müqayisə edim?",
+                      "Какие товары сравнить?")
+        best = max(items, key=lambda p: p["rating"])
+        cheapest = min(items, key=lambda p: p["price_azn"])
+        return "\n".join([_line(i, p, lang) for i, p in enumerate(items, 1)] + [
+            tr(lang, f"Cheapest: {cheapest['name'][lang]} · best rated: {best['name'][lang]}",
+               f"Ən ucuz: {cheapest['name'][lang]} · ən yüksək reytinq: {best['name'][lang]}",
+               f"Дешевле всего: {cheapest['name'][lang]} · лучший рейтинг: {best['name'][lang]}")])
+    if found is not None:
+        st["results"] = [p["id"] for p in found]
+        st["selected"] = found[0]["id"] if len(found) == 1 else None
+        if not found:
+            return tr(lang, "Sorry, no products match that.", "Təəssüf, uyğun məhsul tapılmadı.",
+                      "К сожалению, подходящих товаров нет.")
+        if len(found) == 1:
+            return _details(found[0], lang)
+        return tr(lang, "Here is what I found:", "Tapdıqlarım:", "Вот что я нашёл:") + "\n" + \
+            "\n".join(_line(i, p, lang) for i, p in enumerate(found, 1))
+    if ref or selected:
+        return _details(ref or selected, lang)
+    if shown:  # "back to shopping": the earlier results are still there
+        return tr(lang, "Your earlier results:", "Əvvəlki nəticələr:", "Ваши результаты:") + "\n" + \
+            "\n".join(_line(i, p, lang) for i, p in enumerate(shown, 1))
+    return tr(lang, "What are you looking for? For example: 'wireless headphones under 100 AZN'.",
+              "Nə axtarırsınız? Məsələn: '100 AZN-dən ucuz simsiz qulaqlıq'.",
+              "Что вы ищете? Например: «беспроводные наушники до 100 AZN».")

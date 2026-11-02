@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperChat</title>
+<style>
+  :root {
+    --bg: #f5f3ee; --surface: #ffffff; --ink: #1d1c1a; --soft: #6f6b63; --line: #e4e0d6;
+    --flights: #2f64d6; --shopping: #c9741f; --cinema: #c23a64; --neutral: #6f6b63;
+    --good: #1f8a4c; --bad: #c0392b; --user: #1d1c1a; --user-ink: #f5f3ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --surface: #1d1d1b; --ink: #ecebe6; --soft: #9c988f; --line: #2e2d2a;
+      --flights: #6b95f0; --shopping: #e59a4f; --cinema: #e46a90; --neutral: #9c988f;
+      --good: #4fbf7f; --bad: #ef6f61; --user: #ecebe6; --user-ink: #141413;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; }
+  button { font: inherit; cursor: pointer; color: inherit; }
+
+  header { border-bottom: 1px solid var(--line); background: var(--surface); }
+  .bar { max-width: 860px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 14px; }
+  .brand { font-family: Georgia, "Times New Roman", serif; font-size: 22px; letter-spacing: -.01em; margin-right: auto; }
+  .brand b { font-weight: 700; }
+  .modes { display: flex; gap: 6px; }
+  .mode { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--soft);
+          transition: all .2s; white-space: nowrap; }
+  .mode.on { color: #fff; border-color: transparent; }
+  .mode.on[data-d=flights] { background: var(--flights); }
+  .mode.on[data-d=shopping] { background: var(--shopping); }
+  .mode.on[data-d=cinema] { background: var(--cinema); }
+  #reset { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 5px 10px; font-size: 13px; }
+
+  main { flex: 1; overflow-y: auto; }
+  #log { max-width: 860px; margin: 0 auto; padding: 24px 16px 8px; display: flex; flex-direction: column; gap: 18px; }
+
+  .welcome h2 { font-family: Georgia, serif; font-weight: 400; font-size: 28px; margin: 8px 0 4px; letter-spacing: -.01em; }
+  .welcome p { color: var(--soft); margin: 0 0 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; border-top: 3px solid var(--c); }
+  .tile h3 { margin: 0 0 8px; font-size: 14px; color: var(--c); }
+  .tile button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 6px 0;
+                 border-top: 1px dashed var(--line); font-size: 13.5px; color: var(--ink); }
+  .tile button:hover { color: var(--c); }
+
+  .me { align-self: flex-end; max-width: 80%; background: var(--user); color: var(--user-ink);
+        padding: 9px 14px; border-radius: 16px 16px 4px 16px; white-space: pre-wrap; }
+  .reply { align-self: stretch; display: flex; flex-direction: column; gap: 10px; }
+  .section { border-left: 3px solid var(--c); padding: 2px 0 2px 14px; }
+  .label { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--c); margin-bottom: 4px; }
+  .text { white-space: pre-wrap; }
+  .text strong { font-weight: 600; }
+  .items { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .item { display: grid; grid-template-columns: 26px 1fr; gap: 10px; background: var(--surface); border: 1px solid var(--line);
+          border-radius: 12px; padding: 10px 12px; }
+  .num { width: 24px; height: 24px; border-radius: 50%; background: var(--c); color: #fff; font-size: 12px; font-weight: 600;
+         display: grid; place-items: center; }
+  .title { font-weight: 600; }
+  .sub { color: var(--soft); font-size: 13px; font-weight: 400; margin-left: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
+  .chip { font-size: 12.5px; padding: 1px 8px; border-radius: 6px; background: var(--bg); color: var(--soft); }
+  .chip.price { color: var(--ink); font-weight: 600; }
+  .chip.good { color: var(--good); }
+  .chip.bad { color: var(--bad); font-weight: 600; }
+  .total { font-weight: 600; margin-top: 6px; }
+
+  .typing { display: flex; gap: 4px; padding: 6px 0 6px 17px; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--soft); animation: blink 1s infinite; }
+  .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+  @keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+  footer { border-top: 1px solid var(--line); background: var(--surface); }
+  form { max-width: 860px; margin: 0 auto; padding: 12px 16px 16px; display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+          background: var(--bg); color: var(--ink); outline: none; }
+  input:focus { border-color: var(--soft); }
+  form button { border: 0; border-radius: 12px; padding: 0 18px; background: var(--ink); color: var(--bg); font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: 1fr; }
+    .modes .mode span { display: none; }
+    .brand { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><b>Super</b>Chat</div>
+    <div class="modes">
+      <div class="mode" data-d="flights">✈️ <span>Flights</span></div>
+      <div class="mode" data-d="shopping">🛒 <span>Shopping</span></div>
+      <div class="mode" data-d="cinema">🎬 <span>Cinema</span></div>
+    </div>
+    <button id="reset" title="Start a new conversation">New chat</button>
+  </div>
+</header>
+<main id="scroll"><div id="log"></div></main>
+<footer>
+  <form id="form">
+    <input id="input" autocomplete="off" placeholder="Ask about flights, products or films…" autofocus>
+    <button type="submit">Send</button>
+  </form>
+</footer>
+<script>
+const DOMAINS = {
+  flights: { icon: "✈️", name: "Flights", color: "var(--flights)",
+             examples: ["Flights from Baku to Istanbul on Friday", "Cümə günü Bakıdan Dubaya uçuş", "Рейсы в Москву"] },
+  shopping: { icon: "🛒", name: "Shopping", color: "var(--shopping)",
+              examples: ["Wireless headphones under 100 AZN", "Noutbuklar göstər", "Покажи смартфоны"] },
+  cinema: { icon: "🎬", name: "Cinema", color: "var(--cinema)",
+            examples: ["What is playing tonight?", "Şənbə günü sci-fi filmləri", "Что идет в субботу?"] },
+};
+const LABELS = { mixed: "Mixed request", follow_up: "Follow-up", ambiguous: "Clarification",
+                 out_of_scope: "Out of scope", greeting: "SuperChat", error: "Error" };
+const ICON_TO_DOMAIN = { "✈️": "flights", "🛒": "shopping", "🎬": "cinema" };
+const GOOD = /\b(direct|birbaşa|прямой)\b/i;
+const BAD = /(sold out|out of stock|yer yoxdur|stokda yoxdur|мест нет|нет в наличии)/i;
+
+const log = document.getElementById("log"), scroll = document.getElementById("scroll");
+const input = document.getElementById("input");
+let sessionId = null;
+try { sessionId = sessionStorage.getItem("sid"); } catch (e) {}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function down() { scroll.scrollTop = scroll.scrollHeight; }
+
+function setActive(domain) {
+  document.querySelectorAll(".mode").forEach(m => m.classList.toggle("on", m.dataset.d === domain));
+}
+
+// One result line ("1. Title — a · b · c") becomes a card with a title and chips.
+function itemCard(n, line) {
+  const card = el("div", "item");
+  card.appendChild(el("div", "num", n));
+  const body = el("div");
+  let title, rest;
+  if (line.includes(" — ")) {
+    [title, rest] = [line.slice(0, line.indexOf(" — ")), line.slice(line.indexOf(" — ") + 3)];
+  } else {
+    const parts = line.split(" · ");
+    [title, rest] = [parts.shift(), parts.join(" · ")];
+  }
+  const t = el("div", "title");
+  const m = title.match(/^(.*?)\s*\((.*)\)$/);
+  t.textContent = m ? m[1] : title;
+  if (m) t.appendChild(el("span", "sub", m[2]));
+  body.appendChild(t);
+  const chips = el("div", "chips");
+  rest.split(" · ").forEach(c => {
+    let cls = "chip";
+    if (/AZN/.test(c)) cls += " price";
+    if (GOOD.test(c)) cls += " good";
+    if (BAD.test(c)) cls += " bad";
+    chips.appendChild(el("span", cls, c));
+  });
+  body.appendChild(chips);
+  card.appendChild(body);
+  return card;
+}
+
+function section(text, domain, label) {
+  const sec = el("div", "section");
+  sec.style.setProperty("--c", DOMAINS[domain] ? DOMAINS[domain].color : "var(--neutral)");
+  sec.appendChild(el("div", "label", label));
+  let items = null;
+  text.split("\n").forEach(line => {
+    const m = line.match(/^(\d+)\.\s+(.*)$/);
+    if (m) {
+      if (!items) { items = el("div", "items"); sec.appendChild(items); }
+      items.appendChild(itemCard(m[1], m[2]));
+    } else if (/^(Total|Cəmi|Итого):/.test(line)) {
+      sec.appendChild(el("div", "total", line));
+    } else if (line.trim()) {
+      items = null;
+      sec.appendChild(el("div", "text", line));
+    }
+  });
+  return sec;
+}
+
+function renderReply(data) {
+  const wrap = el("div", "reply");
+  const parts = data.reply.split("\n\n");
+  const isMixed = data.category === "mixed";
+  parts.forEach(part => {
+    let domain = data.domain, label;
+    const icon = Object.keys(ICON_TO_DOMAIN).find(i => part.startsWith(i));
+    if (isMixed && icon) {
+      domain = ICON_TO_DOMAIN[icon];
+      part = part.slice(icon.length).trim();
+    }
+    if (DOMAINS[data.category] || data.category === "follow_up" || isMixed) {
+      label = DOMAINS[domain].icon + " " + DOMAINS[domain].name + (data.category === "follow_up" ? " · follow-up" : "");
+    } else {
+      domain = null;
+      label = LABELS[data.category] || data.category;
+    }
+    wrap.appendChild(section(part, domain, label));
+  });
+  log.appendChild(wrap);
+  setActive(DOMAINS[data.category] || data.category === "follow_up" ? data.domain : (isMixed ? data.domain : null));
+}
+
+async function send(text) {
+  if (!text.trim()) return;
+  document.querySelector(".welcome")?.remove();
+  log.appendChild(el("div", "me", text));
+  input.value = "";
+  const typing = el("div", "typing");
+  typing.innerHTML = "<i></i><i></i><i></i>";
+  log.appendChild(typing);
+  down();
+  try {
+    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, session_id: sessionId }) });
+    const data = await res.json();
+    sessionId = data.session_id;
+    try { sessionStorage.setItem("sid", sessionId); } catch (e) {}
+    typing.remove();
+    renderReply(data);
+  } catch (e) {
+    typing.remove();
+    log.appendChild(section("Connection problem. Please try again.", null, LABELS.error));
+  }
+  down();
+  input.focus();
+}
+
+function welcome() {
+  const w = el("div", "welcome");
+  w.appendChild(el("h2", null, "Flights, shopping and cinema in one chat."));
+  w.appendChild(el("p", null, "Just ask and switch topics any time, in English, Azərbaycanca or по-русски."));
+  const tiles = el("div", "tiles");
+  Object.values(DOMAINS).forEach(d => {
+    const tile = el("div", "tile");
+    tile.style.setProperty("--c", d.color);
+    tile.appendChild(el("h3", null, d.icon + " " + d.name));
+    d.examples.forEach(x => {
+      const b = el("button", null, x);
+      b.type = "button";
+      b.onclick = () => send(x);
+      tile.appendChild(b);
+    });
+    tiles.appendChild(tile);
+  });
+  w.appendChild(tiles);
+  log.appendChild(w);
+}
+
+document.getElementById("form").addEventListener("submit", e => { e.preventDefault(); send(input.value); });
+document.getElementById("reset").addEventListener("click", () => {
+  sessionId = null;
+  try { sessionStorage.removeItem("sid"); } catch (e) {}
+  log.innerHTML = "";
+  setActive(null);
+  welcome();
+});
+welcome();
+</script>
+</body>
+</html>
