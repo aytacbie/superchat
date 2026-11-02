@@ -2,7 +2,7 @@
 
 **Command:** `python eval_routing.py` (add `-v` to print every reply)
 **Data:** official mock dataset. Reference date: Monday, 2 November 2026.
-**Test set:** 49 scripted conversations with 123 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
+**Test set:** 50 scripted conversations with 124 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
 
 Each turn is checked twice:
 1. **Routing:** the category the router picks must equal the expected category.
@@ -12,8 +12,8 @@ Each turn is checked twice:
 
 | Metric | Result |
 |---|---|
-| Routing accuracy | **123 / 123 = 100.0 %** |
-| Answer checks | **114 / 114 = 100.0 %** |
+| Routing accuracy | **124 / 124 = 100.0 %** |
+| Answer checks | **115 / 115 = 100.0 %** |
 
 | Category | Correct / total |
 |---|---|
@@ -23,7 +23,7 @@ Each turn is checked twice:
 | mixed | 4 / 4 |
 | follow_up | 31 / 31 |
 | ambiguous | 6 / 6 |
-| out_of_scope | 8 / 8 |
+| out_of_scope | 9 / 9 |
 | greeting / small talk | 2 / 2 |
 
 ## Error analysis
@@ -51,6 +51,7 @@ The final score comes after fixing the errors that the test set found during dev
 ## Phase 2 additions
 
 - **Free-text product requests.** The mentor's example "Salam mənə iphone18 lazımdı" was answered with the greeting, because no catalogue word matched. The router now treats a wish to buy ("lazımdır", "need", "купить", "нужен") as shopping, and the Shopping module names the missing item: "'iphone 18' kataloqumuzda yoxdur" and lists the categories it does have. Three turns were added for this (AZ, EN, RU).
+- **Azerbaijani typed without its letters.** "hava necedir" got an English refusal: with no ə/ı/ş and no listed word, the message counted as English. Language detection now also knows Azerbaijani word beginnings ("lazım", "göstər", "uçuş") and the -dir/-dur ending. Stems were chosen so that English words do not match ("nece" would catch "necessary"). One turn was added.
 - **Azerbaijani city endings.** "Bakıdan Londona uçuş" listed every destination, because "Londona" was not recognised as a place. In Azerbaijani messages a word with a from/to ending is now checked as a city. The mock data answers "'london' üçün uçuş yoxdur", and the live source finds London. One turn was added. The first version also applied the rule to English words ("compare" was read as a city) and broke 9 answer checks; it is now limited to Azerbaijani messages.
 - **Data layer tests:** `python -m unittest discover tests`, 17 tests, all passing, no network needed. They cover the HTTP client (cache hits, retry on 5xx, 429 with Retry-After, no retry on 401, timeouts, circuit breaker, auth parameters, one provider call for concurrent identical requests). They also cover the CinemaPlus mapping (schedule, Azerbaijani aliases, lazy genre and runtime, seat count, seat hold), the Aviasales mapping (USD→AZN, local arrival time across time zones, EN/AZ/RU city names, buy link) one full Flights conversation on live-shaped data, and the DummyJSON mapping: paging, USD→AZN, colour from the title, and "iphone18" listing iPhones before accessories.
 - **Live check (manual, 2 Nov 2026, against cinemaplus.az):** "What is playing tonight?", "the second one", "book 2 seats for it", "Bu axşam Ganjlik Mall-da nə var?", "Odisseya filmi sabah var?", "Comedy films tomorrow", "Russian films on Wednesday at 28 Mall". All were routed to Cinema and answered from the real schedule with real free-seat counts. Replies take 1–4 s once the background warm-up has finished, because the site itself takes 1–3 s per request.

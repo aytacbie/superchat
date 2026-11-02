@@ -27,6 +27,7 @@ CONVERSATIONS = [
     [("I need a flight to Istanbul on 6 November and a backpack for the trip.", "mixed", "Backpack 25L")],
     [("Show me something good.", "ambiguous", "flights")],
     [("What is the weather in Ganja?", "out_of_scope", "can't help")],
+    [("hava necedir", "out_of_scope", "kömək edə bilmirəm")],
     [("Book two seats.", "ambiguous", "film and showtime")],
 
     # ---- Flights module (3.4) ----

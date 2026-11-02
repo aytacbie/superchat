@@ -98,7 +98,7 @@ Reservations are mock: they hold seats in memory and return a booking reference.
 
 - **No invented data.** Every flight, product, film, price and showtime comes from a repository record. When nothing matches, SuperChat says so and offers real alternatives: other dates, the destination list, the categories it sells.
 - **Language and length.** Replies use Azerbaijani, English and Russian templates, chosen per message, with one line per result.
-- **Routing tests.** `eval_routing.py` runs 49 conversations with 123 turns in EN, AZ and RU, including the brief's 8 samples, on the mock dataset. It checks the category and a fact in each reply: routing 123/123, answers 114/114.
+- **Routing tests.** `eval_routing.py` runs 50 conversations with 124 turns in EN, AZ and RU, including the brief's 8 samples, on the mock dataset. It checks the category and a fact in each reply: routing 124/124, answers 115/115.
 - **Data layer tests.** `tests/test_sources.py` has 17 offline tests covering the client's cache, retries, 429, circuit breaker and request sharing, and the CinemaPlus, Aviasales and DummyJSON mappings. See `TEST_LOG.md` for details and the error analysis.
 
 ## 6. Bonus tasks

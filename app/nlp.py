@@ -43,7 +43,11 @@ def find(t, keys):
 
 _AZ_WORDS = {"salam", "var", "ne", "bu", "ve", "ucuz", "goster", "hansi", "bes", "mene", "ucun",
              "isteyirem", "axsam", "sabah", "bugun", "nece", "sebet", "varmi", "yox", "beli",
-             "haqqinda", "qeder", "ile", "daha", "olar", "bron", "bilet", "mi", "mu", "en"}
+             "haqqinda", "qeder", "ile", "daha", "olar", "bron", "bilet", "mi", "mu", "en", "hava"}
+# Azerbaijani typed without its own letters ("hava necedir", "lazimdi"): word beginnings and the
+# copula ending -dir/-dur, which English words almost never have.
+_AZ_STEMS = ("necedi", "neceye", "lazim", "isteyir", "goster", "hansi", "ucus", "ucaq", "yaxsi", "nedir",
+             "harada", "neyin", "sebet", "mehsul", "kinoteatr", "seans", "teessuf", "sagol", "tesekkur")
 
 
 def detect_lang(text, current):
@@ -53,7 +57,8 @@ def detect_lang(text, current):
     if re.search(r"[əğışçöü]", low):
         return "az"
     words = re.findall(r"[a-z]+", low)
-    if any(w in _AZ_WORDS for w in words):
+    if any(w in _AZ_WORDS or w.startswith(_AZ_STEMS) or (len(w) > 4 and w.endswith(("dir", "dur")))
+           for w in words):
         return "az"
     if len(words) >= 2:
         return "en"
