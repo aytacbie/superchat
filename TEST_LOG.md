@@ -45,3 +45,41 @@ The final score comes after fixing the errors that the test set found during dev
 - The router is rule-based. A phrasing whose words are not in the keyword lists, for example a product described only by a synonym we did not add, falls to `out_of_scope` or `ambiguous`. A larger, independently written test set would probably score lower than 100 %.
 - Azerbaijani suffix handling is heuristic: case endings on city names (Bakı**dan**, İstanbul**a**) and word stems.
 - Two intents of the same domain in one message (two different flights) are handled as one search.
+
+---
+
+# Bonus: visual search test
+
+**Command:** `python eval_visual.py <photo folder>`. Use `-v` to print every photo.
+**Photos:** the 194 product photos of the author's earlier `visual-search` project. They are not part of this repository.
+**Labels:** `tests/visual_cases.csv` gives the class each photo shows, or `none` for things the catalogue does not sell:
+- 33 photos show products we sell: laptops, smartphones, sneakers, AirPods (earbuds), AirPods Max (headphones), Echo and HomePod (speakers), Apple Watch (smartwatch) and a backpack.
+- 161 photos show things we do not sell: groceries, furniture, cosmetics, cars, analog watches, tablets, women's shoes, kitchenware and so on.
+
+| Photos of products we sell (33) | |
+|---|---|
+| Identified with confidence ≥ 60 % | **31 (94 %)** |
+| Unsure, and the right product was among the offered options | 2 (6 %) |
+| Confidently wrong | **0** |
+
+| Photos of things we do not sell (161) | |
+|---|---|
+| Said "not in our catalogue" | **146 (91 %)** |
+| Asked the user to confirm | 11 (7 %) |
+| Confidently showed a wrong product | 4 (2 %) |
+
+**Error analysis.**
+- **Coffee items (3 errors).** A jar of instant coffee, a black cup and a blender were all called "coffee machine". They look and read like coffee products. The catalogue has no coffee-machine photo to calibrate against.
+- **One heeled shoe was called "earbuds" (75 %).** We have no good explanation; zero-shot CLIP occasionally fails on unusual product shots.
+- **The two "asked" products.** The Apple Watch scored 51 % smartwatch against 49 % analog watch, and the Beats Flex scored 32 % headphones against 31 % earbuds. In both cases the system offered the right answer in its question, which is the fallback the brief asks for.
+- **How the classes were tuned.** The first run, with fewer "not in catalogue" classes, wrongly showed a product for 10 of the 161 photos (6 %). We then added generic classes for tablets, other footwear and kitchen appliances, and the rate fell to 2 %. These classes were tuned on this same photo set, so accuracy on new photos will probably be somewhat lower.
+
+# Bonus: voice input test
+
+Speech recognition runs in the browser (Web Speech API), so it was tested in the browser with a scripted recogniser standing in for the microphone. Three utterances were spoken in a row: "Bu axşam kinoda nə var?", "Birincini bron et" and "Покажи смартфоны". All three were sent without any button press.
+- After each reply the recogniser restarted. Its language followed the conversation: en-US, then az-AZ, then ru-RU.
+- Spoken replies were read in the matching language.
+- The microphone paused while the reply was read aloud, then listening resumed.
+- The voice booking ("Birincini bron et") reserved a ticket.
+
+**Not tested here:** recognition quality on real speech. It depends on the browser vendor's recogniser, and Azerbaijani support is weaker than English or Russian.

@@ -142,8 +142,9 @@ def _search(t, s, repo, origin, dest, day, return_day=None):
         params = {"origin": st["search"].get("origin", "GYD"), "dest": st["search"].get("dest"), "date": day}
     st["search"] = params
     items = _filter(t, repo.search(params["origin"], params.get("dest"), params["date"]), repo)
-    route = f"{_city(repo, params['origin']) if params['origin'] else '?'} → " \
-            f"{_city(repo, params['dest']) if params.get('dest') else '?'}"
+    anywhere = tr(lang, "all destinations", "bütün istiqamətlər", "все направления")
+    route = f"{_city(repo, params['origin']) if params['origin'] else anywhere} → " \
+            f"{_city(repo, params['dest']) if params.get('dest') else anywhere}"
     when = f", {fmt_day(params['date'], lang)}" if params["date"] else ""
     back = []
     if return_day and params.get("dest"):

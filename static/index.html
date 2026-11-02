@@ -75,13 +75,35 @@
   @keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
 
   footer { border-top: 1px solid var(--line); background: var(--surface); }
+  .attached { max-width: 860px; margin: 0 auto; padding: 10px 16px 0; display: flex; align-items: center; gap: 10px; }
+  .attached[hidden] { display: none; }
+  .attached img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+  .attached span { color: var(--soft); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .attached button { border: 1px solid var(--line); background: none; border-radius: 8px; width: 30px; height: 30px; }
+  .me .caption { margin-top: 6px; }
   form { max-width: 860px; margin: 0 auto; padding: 12px 16px 16px; display: flex; gap: 8px; }
   input { flex: 1; min-width: 0; font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
           background: var(--bg); color: var(--ink); outline: none; }
   input:focus { border-color: var(--soft); }
   form button { border: 0; border-radius: 12px; padding: 0 18px; background: var(--ink); color: var(--bg); font-weight: 600; }
+  form button.tool { width: 46px; padding: 0; font-size: 18px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+  form button.tool:hover { border-color: var(--soft); }
+  form button.tool.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  #lang { display: none; font-size: 12px; font-weight: 700; }
+  form.listening #lang { display: block; }
+  form.listening input { border-color: var(--cinema); }
+  #speak { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 4px 8px; font-size: 14px; }
+  #speak.on { background: var(--ink); color: var(--bg); }
+  .me img { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; }
 
+  #reset { white-space: nowrap; }
   @media (max-width: 640px) {
+    .bar { gap: 8px; }
+    .modes { gap: 4px; }
+    .mode { padding: 5px 8px; }
+    form button.tool { width: 40px; }
+    form button { padding: 0 12px; }
     .tiles { grid-template-columns: 1fr; }
     .modes .mode span { display: none; }
     .brand { font-size: 19px; }
@@ -97,12 +119,22 @@
       <div class="mode" data-d="shopping">🛒 <span>Shopping</span></div>
       <div class="mode" data-d="cinema">🎬 <span>Cinema</span></div>
     </div>
+    <button id="speak" title="Read replies aloud" aria-label="Read replies aloud">🔇</button>
     <button id="reset" title="Start a new conversation">New chat</button>
   </div>
 </header>
 <main id="scroll"><div id="log"></div></main>
 <footer>
+  <div class="attached" id="attached" hidden>
+    <img id="preview" alt="Photo to send">
+    <span id="preview-name"></span>
+    <button type="button" id="unattach" title="Remove photo" aria-label="Remove photo">✕</button>
+  </div>
   <form id="form">
+    <button type="button" class="tool" id="attach" title="Search by photo" aria-label="Search by photo">📎</button>
+    <input type="file" id="file" accept="image/*" hidden>
+    <button type="button" class="tool" id="mic" title="Hands-free voice input" aria-label="Voice input">🎤</button>
+    <button type="button" class="tool" id="lang" title="Speech language (tap to change)">EN</button>
     <input id="input" autocomplete="off" placeholder="Ask about flights, products or films…" autofocus>
     <button type="submit">Send</button>
   </form>
@@ -212,35 +244,85 @@ function renderReply(data) {
   setActive(DOMAINS[data.category] || data.category === "follow_up" ? data.domain : (isMixed ? data.domain : null));
 }
 
-async function send(text) {
-  if (!text.trim()) return;
+// Posts to the server and renders the reply; `bubble` is the user's side of the exchange.
+async function ask(url, init, bubble) {
+  busy = true;
   document.querySelector(".welcome")?.remove();
-  log.appendChild(el("div", "me", text));
-  input.value = "";
+  log.appendChild(bubble);
   const typing = el("div", "typing");
   typing.innerHTML = "<i></i><i></i><i></i>";
   log.appendChild(typing);
   down();
   try {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, session_id: sessionId }) });
+    const res = await fetch(url, init);
     const data = await res.json();
     sessionId = data.session_id;
     try { sessionStorage.setItem("sid", sessionId); } catch (e) {}
     typing.remove();
     renderReply(data);
+    if (data.lang && data.lang !== voiceLang) setVoiceLang(data.lang);
+    speak(data.reply, data.lang);
   } catch (e) {
     typing.remove();
     log.appendChild(section("Connection problem. Please try again.", null, LABELS.error));
   }
   down();
   input.focus();
+  busy = false;
+  resume();
+}
+
+function send(text) {
+  if (!text.trim()) return;
+  input.value = "";
+  return ask("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: text, session_id: sessionId }) }, el("div", "me", text));
+}
+
+function sendImage(file, text) {
+  const bubble = el("div", "me");
+  const img = el("img");
+  img.src = URL.createObjectURL(file);
+  img.alt = "Uploaded photo";
+  bubble.appendChild(img);
+  if (text.trim()) bubble.appendChild(el("div", "caption", text));
+  const form = new FormData();
+  form.append("file", file);
+  form.append("message", text);
+  if (sessionId) form.append("session_id", sessionId);
+  input.value = "";
+  return ask("/api/image", { method: "POST", body: form }, bubble);
+}
+
+// A chosen photo waits above the input, so a question can be typed (or spoken) with it.
+let attachedFile = null;
+const attachedBox = document.getElementById("attached");
+function attach(file) {
+  attachedFile = file;
+  attachedBox.hidden = !file;
+  if (file) {
+    document.getElementById("preview").src = URL.createObjectURL(file);
+    document.getElementById("preview-name").textContent = file.name;
+    input.placeholder = "Add a question (optional) and press Send…";
+    input.focus();
+  } else {
+    input.placeholder = listening ? "Listening… just speak" : "Ask about flights, products or films…";
+  }
+}
+function submit(text) {
+  if (attachedFile) {
+    const file = attachedFile;
+    attach(null);
+    return sendImage(file, text);
+  }
+  return send(text);
 }
 
 function welcome() {
   const w = el("div", "welcome");
   w.appendChild(el("h2", null, "Flights, shopping and cinema in one chat."));
-  w.appendChild(el("p", null, "Just ask and switch topics any time, in English, Azərbaycanca or по-русски."));
+  w.appendChild(el("p", null, "Just ask and switch topics any time, in English, Azərbaycanca or по-русски. " +
+                               "Tap 📎 to find a product from a photo, or 🎤 to talk hands-free."));
   const tiles = el("div", "tiles");
   Object.values(DOMAINS).forEach(d => {
     const tile = el("div", "tile");
@@ -258,7 +340,104 @@ function welcome() {
   log.appendChild(w);
 }
 
-document.getElementById("form").addEventListener("submit", e => { e.preventDefault(); send(input.value); });
+// ---- Voice (bonus): hands-free input. One tap turns listening on; the browser's speech
+// recogniser detects where each utterance starts and ends, and every utterance is sent
+// through the same chat pipeline. Replies can be read aloud.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE = { en: "en-US", az: "az-AZ", ru: "ru-RU" };
+const form = document.getElementById("form");
+const micBtn = document.getElementById("mic"), langBtn = document.getElementById("lang");
+const speakBtn = document.getElementById("speak");
+let busy = false, listening = false, speaking = false, speakOn = false, recog = null;
+let voiceLang = ({ az: "az", ru: "ru" })[(navigator.language || "en").slice(0, 2)] || "en";
+
+function setVoiceLang(lang) {
+  voiceLang = lang;
+  langBtn.textContent = lang.toUpperCase();
+  if (recog) recog.abort();  // restarts in the new language
+}
+
+function listen() {
+  if (!listening || busy || speaking || recog) return;
+  recog = new SR();
+  recog.lang = VOICE[voiceLang];
+  recog.interimResults = true;
+  recog.continuous = false;  // ends by itself when the speaker stops: one utterance per run
+  recog.onresult = e => {
+    const r = e.results[e.results.length - 1];
+    input.value = r[0].transcript;
+    if (r.isFinal && r[0].transcript.trim()) submit(r[0].transcript);
+  };
+  recog.onerror = e => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      stopListening();
+      log.appendChild(section("Microphone access was blocked. Allow it in the browser to use voice input.",
+                              null, LABELS.error));
+      down();
+    }
+  };
+  recog.onend = () => { recog = null; setTimeout(listen, 200); };  // silence timeout: listen again
+  try { recog.start(); } catch (e) { recog = null; }
+}
+
+function resume() { if (!speaking) listen(); }
+
+function stopListening() {
+  listening = false;
+  micBtn.classList.remove("on");
+  form.classList.remove("listening");
+  input.placeholder = "Ask about flights, products or films…";
+  if (recog) recog.abort();
+}
+
+micBtn.addEventListener("click", () => {
+  if (!SR) {
+    log.appendChild(section("Voice input needs a browser with speech recognition, such as Chrome, Edge or Safari.",
+                            null, LABELS.error));
+    down();
+    return;
+  }
+  if (listening) return stopListening();
+  listening = true;
+  micBtn.classList.add("on");
+  form.classList.add("listening");
+  input.placeholder = "Listening… just speak";
+  listen();
+});
+langBtn.addEventListener("click", () => {
+  const order = ["en", "az", "ru"];
+  setVoiceLang(order[(order.indexOf(voiceLang) + 1) % order.length]);
+});
+
+function speak(text, lang) {
+  if (!speakOn || !window.speechSynthesis) return;
+  const clean = text.replace(/[\u{1F300}-\u{1FAFF}☀-➿️★✅→·•—]/gu, " ").slice(0, 400);
+  const u = new SpeechSynthesisUtterance(clean);
+  u.lang = VOICE[lang] || VOICE[voiceLang];
+  speaking = true;
+  if (recog) recog.abort();  // do not transcribe our own voice
+  const done = () => { if (speaking) { speaking = false; resume(); } };
+  u.onend = u.onerror = done;
+  setTimeout(done, 3000 + clean.length * 90);  // some browsers never fire onend
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+speakBtn.addEventListener("click", () => {
+  speakOn = !speakOn;
+  speakBtn.textContent = speakOn ? "🔊" : "🔇";
+  speakBtn.classList.toggle("on", speakOn);
+  if (!speakOn && window.speechSynthesis) speechSynthesis.cancel();
+});
+setVoiceLang(voiceLang);
+
+document.getElementById("form").addEventListener("submit", e => { e.preventDefault(); submit(input.value); });
+const fileInput = document.getElementById("file");
+document.getElementById("attach").addEventListener("click", () => fileInput.click());
+document.getElementById("unattach").addEventListener("click", () => attach(null));
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) attach(fileInput.files[0]);
+  fileInput.value = "";
+});
 document.getElementById("reset").addEventListener("click", () => {
   sessionId = null;
   try { sessionStorage.removeItem("sid"); } catch (e) {}

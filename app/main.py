@@ -3,11 +3,11 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import cinema, flights, nlp, router, shopping
+from . import cinema, flights, nlp, router, shopping, visual
 from .repositories import FlightRepository, ProductRepository, ShowtimeRepository
 
 log = logging.getLogger("superchat")
@@ -18,6 +18,7 @@ modules = {"flights": flights, "shopping": shopping, "cinema": cinema}
 keywords = {name: mod.keywords(repos[name]) for name, mod in modules.items()}
 ICONS = {"flights": "✈️", "shopping": "🛒", "cinema": "🎬"}
 sessions = {}
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def new_session():
@@ -69,7 +70,41 @@ def chat(body: ChatIn):
         reply, category = nlp.tr(s["lang"], "Sorry, something went wrong. Please try again.",
                                  "Bağışlayın, xəta baş verdi. Yenidən cəhd edin.",
                                  "Извините, произошла ошибка. Попробуйте ещё раз."), "error"
-    return {"session_id": sid, "reply": reply, "category": category, "domain": s["active"]}
+    return {"session_id": sid, "reply": reply, "category": category, "domain": s["active"], "lang": s["lang"]}
+
+
+@app.post("/api/image")
+async def image(file: UploadFile = File(...), session_id: str | None = Form(None), message: str = Form("")):
+    """Visual search: a product photo goes to the Shopping module. Text sent with the photo
+    ("is it in stock?", "add it to my cart") is answered right after, against the photo's result."""
+    sid = session_id or uuid.uuid4().hex
+    s = sessions.setdefault(sid, new_session())
+    message = message.strip()[:500]
+    if message:
+        s["lang"] = nlp.detect_lang(message, s["lang"])
+    lang = s["lang"]
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    category = "shopping"
+    try:
+        if len(data) > MAX_IMAGE_BYTES:
+            raise visual.ImageError("too large")
+        reply = visual.handle_image(data, s, repos["shopping"])
+        s["active"] = "shopping"
+        if message:
+            text_reply, text_category = respond(message, s)
+            reply += "\n\n" + text_reply
+            if text_category not in ("shopping", "follow_up"):  # the photo itself is always shopping
+                category = text_category
+    except visual.ImageError:
+        reply, category = nlp.tr(lang, "Sorry, I could not read that file. Please send a JPG or PNG photo up to 8 MB.",
+                                 "Bağışlayın, faylı oxuya bilmədim. 8 MB-a qədər JPG və ya PNG şəkil göndərin.",
+                                 "Не удалось прочитать файл. Отправьте фото JPG или PNG до 8 МБ."), "error"
+    except Exception:
+        log.exception("visual search failed")
+        reply, category = nlp.tr(lang, "Sorry, photo search is unavailable right now. You can describe the product instead.",
+                                 "Bağışlayın, şəkillə axtarış hazırda işləmir. Məhsulu sözlə yaza bilərsiniz.",
+                                 "Поиск по фото сейчас недоступен. Опишите товар словами."), "error"
+    return {"session_id": sid, "reply": reply, "category": category, "domain": s["active"], "lang": s["lang"]}
 
 
 @app.get("/")

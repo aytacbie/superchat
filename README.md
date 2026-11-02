@@ -2,19 +2,23 @@
 
 One chat for flights ✈️, shopping 🛒 and cinema 🎬, built on the official mock dataset (reference date: Monday, 2 November 2026). It works in English, Azerbaijani and Russian.
 
+Bonus features: **search by photo** (📎) and **hands-free voice input** (🎤, with optional spoken replies 🔊).
+
 ## Run locally
 
 ```bash
 pip install -r requirements.txt
+python scripts/download_model.py   # once: the 90 MB CLIP model for photo search
 uvicorn app.main:app
 ```
 
-Then open http://127.0.0.1:8000
+Then open http://127.0.0.1:8000. Voice input needs Chrome, Edge or Safari.
 
 ## Routing tests
 
 ```bash
-python eval_routing.py        # add -v to print every reply
+python eval_routing.py                                 # routing, add -v to print every reply
+python eval_visual.py ../visual-search/data/images     # photo search, needs the photo folder
 ```
 
 Results and error analysis are in [TEST_LOG.md](TEST_LOG.md). Architecture, routing method, state handling and limitations are covered in [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md).
@@ -26,10 +30,11 @@ Results and error analysis are in [TEST_LOG.md](TEST_LOG.md). Architecture, rout
 - `app/flights.py`, `app/shopping.py`, `app/cinema.py`: the domain modules. Each one keeps its own state per session.
 - `app/nlp.py`: language detection (AZ/EN/RU), dates relative to the reference day, counts, and references such as "the second one" or "the cheaper one".
 - `app/main.py`: the FastAPI server (`POST /api/chat`, plus the chat page at `/`).
-- `static/index.html`: the chat page.
+- `app/visual.py`: photo search (zero-shot CLIP with a confidence score). `scripts/build_visual_classes.py` rebuilds `data/visual_classes.json`.
+- `static/index.html`: the chat page, including voice input.
 - `data/`: the mock JSON files.
 
 ## Deploy (Render)
 
-- Build: `pip install -r requirements.txt`
+- Build: `pip install -r requirements.txt && python scripts/download_model.py`
 - Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`

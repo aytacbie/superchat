@@ -11,7 +11,7 @@ CORE_FLIGHT = ["flight", "fly", "plane", "airline", "ucus", "ucaq", "reys", "avi
 FOLLOW_UP = nlp.REFERENCE + BOOK + [
     "seat", "ticket", "yer$", "yerler", "bilet", "мест", "билет", "and for", "what about", "how about",
     "bes$", "а на$", "а в$", "more$", "daha", "еще", "price", "qiymet", "цена", "стоимост",
-    "only$", "ones$", "yalniz", "только", "sort", "order by", "sirala", "сортир", "compare", "muqayise", "сравн"]
+    "only$", "ones$", "yalniz", "только", "yes$", "yeah", "yep", "beli$", "duzdur", "да$", "верно", "sort", "order by", "sirala", "сортир", "compare", "muqayise", "сравн"]
 VAGUE = ["something", "anything", "recommend", "suggest", "bir sey", "maraqli", "tovsiye", "что-нибудь",
          "что-то", "посоветуй", "порекомендуй"]
 TONIGHT = ["tonight", "bu axsam$", "сегодня вечером"]

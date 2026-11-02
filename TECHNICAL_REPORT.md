@@ -93,17 +93,38 @@ Field names follow Appendix A exactly. Reservations are mock: they lower `seats_
 
 `eval_routing.py` runs 45 scripted conversations (119 turns, EN, AZ and RU), including all 8 sample conversations from the brief. It checks both the routing category and a fact in each reply. Result: routing 119/119, answer checks 110/110. See `TEST_LOG.md` for the breakdown and error analysis.
 
-## 7. Known limitations
+## 7. Bonus tasks
+
+**Visual search (`app/visual.py`, `POST /api/image`).** The mock catalogue has no product photos, so visual search is zero-shot:
+- **Offline step.** `scripts/build_visual_classes.py` embeds short text descriptions with the CLIP text model, for example "over-ear wireless headphones" or "a coffee maker". It covers 10 classes that map to catalogue products and 14 "not in catalogue" classes (food, furniture, tablets, analog watches…). The result is saved to `data/visual_classes.json`.
+- **At runtime.** The int8 CLIP vision model (ONNX, about 90 MB, one CPU thread) embeds the photo. A softmax over cosine similarities (CLIP scale 100) gives a confidence per class.
+  - Confidence ≥ 60 % → show the matching products with the confidence. They become the shopping results, so "add it to my cart" works. The user can also type or say a question together with the photo; it is answered right after the photo's result.
+  - Confidence of 20–60 % → ask "Is it A (x %) or B (y %)?".
+  - Lower, or the best class is something we do not sell → say so and ask the user to describe the item.
+- **Results.** On 194 labelled photos: 94 % of catalogue products are identified confidently and none are confidently wrong; 91 % of other items are rejected (see `TEST_LOG.md`).
+- **Trade-off.** Text prompts instead of real catalogue photos means no fine-grained matching. The two laptops, or the two phones, cannot be told apart from a photo. With real product images in Phase 2, the same embedder can index them (FAISS) for nearest-neighbour search.
+
+**Voice input (`static/index.html`).**
+- **Recognition.** The browser's Web Speech API transcribes speech. One tap on 🎤 turns hands-free mode on, with no push-to-talk. The recogniser detects the start and end of each utterance, and each utterance is sent to `/api/chat`, the same routing pipeline as typed text. Listening restarts after every reply.
+- **Language.** The recognition language (en-US, az-AZ or ru-RU) follows the language the server detects for the conversation. It can also be switched by hand.
+- **Spoken replies.** 🔊 turns on spoken replies (`speechSynthesis`). The microphone pauses while the reply is read aloud, so the assistant does not transcribe itself.
+- **Limitations.** Recognition quality and privacy depend on the browser vendor's speech service, since Chrome sends audio to Google. It does not work in Firefox. Azerbaijani recognition is weaker than English or Russian.
+
+**Multilingual.** Azerbaijani, English and Russian work across all domains, including switching language mid-session (section 5).
+
+## 8. Known limitations
 
 - **Vocabulary-bound understanding.** Phrasings, synonyms or typos outside the keyword lists may be routed to out of scope or ambiguous. This is the main cost of the rule-based choice.
 - **Data in English only.** The mock records (descriptions, synopses, colours, city names) are in English, so parts of an Azerbaijani or Russian reply stay in English. Product names are localised because the dataset provides them.
 - **In-memory state.** Sessions, carts and mock bookings live in server memory and are lost on restart. With several server instances they would need a shared store such as Redis.
 - **One intent per domain per message.** Two different flights in one message are treated as one search.
 - **No real round-trip pricing.** Outbound and return flights are listed separately.
-- **Bonus tasks** (voice input, visual search) are not implemented in Phase 1. Multilingual support (AZ/RU/EN, switching mid-session) is implemented as part of the core.
+- **Visual search cannot tell two products of the same type apart**, such as the two laptops, because there are no catalogue photos.
 
-## 8. Libraries and sources
+## 9. Libraries and sources
 
-- FastAPI (MIT licence), Uvicorn (BSD-3), Pydantic (MIT), Python standard library.
-- No language model, no external data provider.
-- Mock dataset supplied by the organisers.
+- FastAPI (MIT licence), Uvicorn (BSD-3), Pydantic (MIT), python-multipart (Apache-2.0), Python standard library.
+- Visual search: CLIP ViT-B/32 (OpenAI, MIT) in the ONNX export `Xenova/clip-vit-base-patch32`; ONNX Runtime (MIT), NumPy (BSD-3), Pillow (MIT-CMU), huggingface_hub (Apache-2.0).
+- Voice: the browser's Web Speech API and speechSynthesis. No extra library.
+- No language model and no external data provider for chat.
+- Mock dataset supplied by the organisers. Visual test photos come from the author's earlier `visual-search` project.
