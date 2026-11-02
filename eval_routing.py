@@ -5,10 +5,12 @@ Usage: python eval_routing.py        (add -v to print every reply)
 Each turn is (message, expected category, text the reply must contain or None).
 Every conversation starts from a fresh session and fresh mock data."""
 import importlib
+import os
 import sys
 from collections import defaultdict
 
-import app.main
+os.environ["SUPERCHAT_DATA"] = "mock"  # routing is measured on the official mock dataset
+import app.main  # noqa: E402
 
 CONVERSATIONS = [
     # ---- the eight sample conversations from the brief (section 7) ----
@@ -74,6 +76,9 @@ CONVERSATIONS = [
     [("Наушники до 100 манат", "shopping", "Беспроводные наушники"),
      ("Добавь в корзину", "shopping", "Итого")],
     [("Do you sell bicycles?", "out_of_scope", None)],
+    [("Salam mene iphone18 lazimdi", "shopping", "'iphone 18' kataloqumuzda yoxdur")],
+    [("I need an iPhone 18", "shopping", "not in our catalogue")],
+    [("Мне нужен айфон", "shopping", "нет в нашем каталоге")],
 
     # ---- Cinema module (3.6) ----
     [("Which films are showing on Friday?", "cinema", "Deep Signal"),

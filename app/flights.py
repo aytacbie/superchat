@@ -23,15 +23,18 @@ _ABLATIVE = ("dan", "den", "ndan", "nden", "tan", "ten")
 _DATIVE = ("a", "e", "ya", "ye", "na", "ne")
 
 
+BASE_KEYWORDS = [n for code, names in CITY_ALIASES.items() if code != "GYD" for n in names] + DIRECT + RETURN + [
+    "round trip", "round-trip", "gedis-donus", "туда и обратно",
+    "flight", "fly", "flies", "plane", "airline", "airport", "baggage", "luggage", "layover",
+    "ucus", "ucaq", "reys", "aviabilet", "aeroport", "baqaj", "aktarma",
+    "рейс", "перел", "самолет", "авиа", "багаж", "вылет", "аэропорт", "пересад"]
+
+
 def keywords(repo):
     """Words that make the router send a message to this module."""
-    cities = [n for code, names in CITY_ALIASES.items() if code != "GYD" for n in names]
     airlines = sorted({nlp.fold(f["airline"].split()[0]) for f in repo.all()})
     numbers = [nlp.fold(f["flight_number"]) + "$" for f in repo.all()]
-    return cities + airlines + numbers + DIRECT + RETURN + ["round trip", "round-trip", "gedis-donus", "туда и обратно",
-        "flight", "fly", "flies", "plane", "airline", "airport", "baggage", "luggage", "layover",
-        "ucus", "ucaq", "reys", "aviabilet", "aeroport", "baqaj", "aktarma",
-        "рейс", "перел", "самолет", "авиа", "багаж", "вылет", "аэропорт", "пересад"]
+    return airlines + numbers + BASE_KEYWORDS
 
 
 def find_route(t):
@@ -68,18 +71,42 @@ _NOT_PLACES = {"the", "a", "an", "my", "book", "fly", "go", "buy", "see", "get",
                "flights", "cinema", "movies", "films", "shopping", "cart", "них", "этих", "течение"}
 
 
-def unknown_place(t):
+def live_route(t, repo, origin, dest):
+    """Cities outside the alias table, resolved by the live source: 'to Paris', 'Parisə', 'в Берлин'.
+    Without a preposition only Azerbaijani case endings count, so ordinary words are not taken for cities."""
+    resolve = getattr(repo, "resolve_city", None)
+    known = sum(CITY_ALIASES.values(), [])
+    for m in re.finditer(r"(?:(?<!\w)(to|from|в|во|из|до)\s+)?(?<!\w)([^\W\d_]{3,})", t):
+        if resolve is None or (origin and dest):
+            break
+        prep, word = m.group(1), m.group(2)
+        if word in _NOT_PLACES or find(word, known) or (not prep and not word.endswith(_ABLATIVE + _DATIVE)):
+            continue
+        code = resolve(word)
+        if not code:
+            continue
+        if prep in ("from", "из") or (not prep and word.endswith(_ABLATIVE)):
+            origin = origin or code
+        elif code != origin:
+            dest = dest or code
+    return origin, dest
+
+
+def unknown_place(t, repo=None):
     """A place after 'to'/'from'/'в'/'из' that is not in our route network, e.g. 'to Paris'."""
+    resolve = getattr(repo, "resolve_city", None)
     for m in re.finditer(r"(?<!\w)(?:to|from|в|во|из)\s+(\w+)", t):
         word = m.group(1)
         if word in _NOT_PLACES or word.isdigit() or nlp.parse_date(word):
             continue
-        if not find(word, sum(CITY_ALIASES.values(), [])):
+        if not find(word, sum(CITY_ALIASES.values(), [])) and not (resolve and resolve(word)):
             return word
     return None
 
 
 def _city(repo, code):
+    if hasattr(repo, "city_name"):
+        return repo.city_name(code)
     for f in repo.all():
         for end in (f["origin"], f["destination"]):
             if end["code"] == code:
@@ -90,17 +117,25 @@ def _city(repo, code):
 def _stops(f, lang, repo):
     if f["stops"] == 0:
         return tr(lang, "direct", "birbaşa", "прямой")
-    via = _city(repo, f["via"]) if f["via"] else "?"
+    if not f["via"]:
+        return tr(lang, f"{f['stops']} stop(s)", f"{f['stops']} aktarma", f"пересадок: {f['stops']}")
+    via = _city(repo, f["via"])
     return tr(lang, f"{f['stops']} stop via {via}", f"{f['stops']} aktarma ({via})",
               f"{f['stops']} пересадка ({via})")
 
 
 def _line(i, f, lang, repo):
-    seats = tr(lang, "seats", "yer", "мест")
+    """One flight. Baggage and seats left are only shown when the source reports them (the
+    Aviasales Data API does not), instead of guessing."""
+    extra = ""
+    if f["baggage_kg"] is not None:
+        extra += f" · {f['baggage_kg']} kg"
+    if f["seats_available"] is not None:
+        extra += f" · {f['seats_available']} {tr(lang, 'seats', 'yer', 'мест')}"
     return (f"{i}. {f['airline']} {f['flight_number']} · {fmt_day(f['departure_local'], lang)} "
             f"{f['departure_local'][11:]}→{f['arrival_local'][11:]} · "
             f"{nlp.fmt_minutes(f['duration_min'], lang)} · {_stops(f, lang, repo)} · "
-            f"{money(f['price_azn'])} · {f['baggage_kg']} kg · {f['seats_available']} {seats}")
+            f"{money(f['price_azn'])}{extra}")
 
 
 def _filter(t, items, repo):
@@ -191,15 +226,14 @@ def _details(t, f, lang, repo):
 def _compare(items, lang, repo):
     cheapest = min(items, key=lambda f: f["price_azn"])
     fastest = min(items, key=lambda f: f["duration_min"])
-    bags = max(items, key=lambda f: f["baggage_kg"])
     lines = [_line(i, f, lang, repo) for i, f in enumerate(items, 1)]
-    lines.append(tr(lang, f"Cheapest: {cheapest['flight_number']} · fastest: {fastest['flight_number']} · "
-                          f"most baggage: {bags['flight_number']}",
-                    f"Ən ucuz: {cheapest['flight_number']} · ən qısa: {fastest['flight_number']} · "
-                    f"ən çox baqaj: {bags['flight_number']}",
-                    f"Дешевле всего: {cheapest['flight_number']} · быстрее всего: {fastest['flight_number']} · "
-                    f"больше багажа: {bags['flight_number']}"))
-    return "\n".join(lines)
+    summary = tr(lang, f"Cheapest: {cheapest['flight_number']} · fastest: {fastest['flight_number']}",
+                 f"Ən ucuz: {cheapest['flight_number']} · ən qısa: {fastest['flight_number']}",
+                 f"Дешевле всего: {cheapest['flight_number']} · быстрее всего: {fastest['flight_number']}")
+    if all(f["baggage_kg"] is not None for f in items):
+        bags = max(items, key=lambda f: f["baggage_kg"])["flight_number"]
+        summary += tr(lang, f" · most baggage: {bags}", f" · ən çox baqaj: {bags}", f" · больше багажа: {bags}")
+    return "\n".join(lines + [summary])
 
 
 def _reserve(t, s, repo, f):
@@ -215,16 +249,28 @@ def _reserve(t, s, repo, f):
     return tr(lang, f"Reserved ✅ Booking {booking['ref']}: {count} passenger(s), total {total} (mock, no payment).",
               f"Bron edildi ✅ Kod {booking['ref']}: {count} sərnişin, cəmi {total} (test bronu, ödəniş yoxdur).",
               f"Забронировано ✅ Код {booking['ref']}: пассажиров {count}, итого {total} (тестовая бронь, без оплаты).") \
-        + "\n" + _line(1, f, lang, repo)[3:]
+        + "\n" + _line(1, f, lang, repo)[3:] + _buy_link(booking, lang)
+
+
+def _buy_link(booking, lang):
+    if not booking.get("url"):
+        return ""
+    return "\n" + tr(lang, f"Buy the ticket on Aviasales: {booking['url']}",
+                     f"Bileti Aviasales-də alın: {booking['url']}",
+                     f"Купить билет на Aviasales: {booking['url']}")
 
 
 def handle(t, s, repo):
     lang, st = s["lang"], s["flights"]
-    origin, dest = find_route(t)
+    origin, dest = live_route(t, repo, *find_route(t))
     split = min([t.find(key) for key in RETURN if find(t, [key])] or [len(t)])  # "... and back on 9 Nov"
     day = nlp.parse_date(t[:split])
     return_day = nlp.parse_date(t[split:]) if split < len(t) else None
-    place = None if (origin and dest) else unknown_place(t)
+    place = None if (origin and dest) else unknown_place(t, repo)
+    if place and hasattr(repo, "resolve_city"):
+        return tr(lang, f"Sorry, I could not find a city called '{place}'. Please check the spelling.",
+                  f"Təəssüf, '{place}' adlı şəhər tapmadım. Yazılışı yoxlayın.",
+                  f"К сожалению, я не нашёл город «{place}». Проверьте написание.")
     if place:
         cities = ", ".join(sorted({_city(repo, c) for c in CITY_ALIASES if c != "GYD"}))
         return tr(lang, f"Sorry, we have no flights for '{place}'. Available destinations: {cities}.",

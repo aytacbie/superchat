@@ -19,6 +19,9 @@ GREETING = ["hi$", "hello", "hey$", "salam", "привет", "здравств",
             "ne ede bilersen", "что ты умеешь"]
 THANKS = ["thanks", "thank you", "thx", "ok$", "okay$", "great$", "cool$", "sag ol", "tesekkur", "eladir",
           "спасибо", "хорошо$", "отлично"]
+# Wanting or buying something with no known product word ("mənə iphone18 lazımdı") is still shopping.
+SHOP_INTENT = ["lazim", "need", "want to buy", "buy", "almaq", "alim", "axtariram", "satirsiz", "satilir",
+               "купить", "куплю", "нужен", "нужна", "нужно", "ищу"]
 # Topics we do not serve; a city name next to them ("hotel in Istanbul") is not a flight request.
 OUT_OF_SCOPE = ["weather", "hotel", "taxi", "restaurant", "news", "joke", "visa", "hava$", "otel", "taksi",
                 "restoran", "xeber", "погод", "отел", "гостиниц", "такси", "ресторан", "новост", "анекдот", "виз"]
@@ -47,6 +50,8 @@ def classify(t, session, keywords):
             return "follow_up", options
     if active and (follow or find(t, VAGUE)):
         return "follow_up", [active]
+    if find(t, SHOP_INTENT) and not find(t, BOOK + SEATS + OUT_OF_SCOPE):
+        return "shopping", ["shopping"]
     if follow or find(t, VAGUE):
         return "ambiguous", []
     if find(t, GREETING + THANKS):

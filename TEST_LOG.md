@@ -2,7 +2,7 @@
 
 **Command:** `python eval_routing.py` (add `-v` to print every reply)
 **Data:** official mock dataset. Reference date: Monday, 2 November 2026.
-**Test set:** 45 scripted conversations with 119 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
+**Test set:** 48 scripted conversations with 122 user turns, in English, Azerbaijani (at least 13 turns) and Russian (at least 11 turns). Every conversation starts from a fresh session and freshly loaded data. The test set includes the 8 sample conversations from section 7 of the brief. The longest conversation switches domain 5 times.
 
 Each turn is checked twice:
 1. **Routing:** the category the router picks must equal the expected category.
@@ -12,13 +12,13 @@ Each turn is checked twice:
 
 | Metric | Result |
 |---|---|
-| Routing accuracy | **119 / 119 = 100.0 %** |
-| Answer checks | **110 / 110 = 100.0 %** |
+| Routing accuracy | **122 / 122 = 100.0 %** |
+| Answer checks | **113 / 113 = 100.0 %** |
 
 | Category | Correct / total |
 |---|---|
 | flights | 21 / 21 |
-| shopping | 22 / 22 |
+| shopping | 25 / 25 |
 | cinema | 25 / 25 |
 | mixed | 4 / 4 |
 | follow_up | 31 / 31 |
@@ -47,6 +47,12 @@ The final score comes after fixing the errors that the test set found during dev
 - Two intents of the same domain in one message (two different flights) are handled as one search.
 
 ---
+
+## Phase 2 additions
+
+- **Free-text product requests.** The mentor's example "Salam mənə iphone18 lazımdı" was answered with the greeting, because no catalogue word matched. The router now treats a wish to buy ("lazımdır", "need", "купить", "нужен") as shopping, and the Shopping module names the missing item: "'iphone 18' kataloqumuzda yoxdur" and lists the categories it does have. Three turns were added for this (AZ, EN, RU).
+- **Data layer tests:** `python -m unittest discover tests`, 15 tests, all passing, no network needed. They cover the HTTP client (cache hits, retry on 5xx, 429 with Retry-After, no retry on 401, timeouts, circuit breaker, auth parameters, one provider call for concurrent identical requests). They also cover the CinemaPlus mapping (schedule, Azerbaijani aliases, lazy genre and runtime, seat count, seat hold), the Aviasales mapping (USD→AZN, local arrival time across time zones, EN/AZ/RU city names, buy link) and one full Flights conversation on live-shaped data.
+- **Live check (manual, 2 Nov 2026, against cinemaplus.az):** "What is playing tonight?", "the second one", "book 2 seats for it", "Bu axşam Ganjlik Mall-da nə var?", "Odisseya filmi sabah var?", "Comedy films tomorrow", "Russian films on Wednesday at 28 Mall". All were routed to Cinema and answered from the real schedule with real free-seat counts. Replies take 1–4 s once the background warm-up has finished, because the site itself takes 1–3 s per request.
 
 # Bonus: visual search test
 

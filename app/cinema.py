@@ -17,14 +17,16 @@ GENRES = {
     "action": ["action", "boyevik", "боевик"],
     "crime": ["crime", "kriminal", "криминал"],
     "romance": ["romance", "romantic", "romantik", "романт"],
+    "fantasy": ["fantasy", "fentezi", "фэнтези"],
 }
 LANGUAGES = {
     "English": ["english", "ingilis", "англ"],
     "Russian": ["russian", "rus dilinde", "rusca", "русск"],
     "Azerbaijani": ["azerbaijani", "azeri", "azerbaycan", "азербайдж"],
+    "Turkish": ["turkish", "turk dilinde", "turkce", "турецк"],
 }
 CINEMAS = {"C001": ["ganjlik", "genclik", "гянджлик"], "C002": ["28 mall", "28mall"],
-           "C003": ["sumgayit", "sumqayit", "сумгаит"]}
+           "C003": ["sumgayit", "sumqayit", "сумгаит"]}  # mock cinemas; live ones bring their own aliases
 BOOK = ["book", "reserve", "bron", "брон", "заброн"]
 BEST = ["best", "top", "highest", "en yaxsi", "reytinq", "лучш", "рейтинг", "good"]
 CINEMA_LIST = ["cinemas$", "which cinema", "where is cinemaplus", "kinoteatrlar", "hansi kinoteatr",
@@ -32,18 +34,36 @@ CINEMA_LIST = ["cinemas$", "which cinema", "where is cinemaplus", "kinoteatrlar"
 LIST_ALL = ["playing", "showing", "what's on", "what is on", "ne var", "ne gedir", "идет", "афиш"]
 
 
+LIMIT = 10  # a real schedule has 100+ showtimes a day; longer lists are cut with a hint to narrow down
+BASE_KEYWORDS = sum(GENRES.values(), []) + LIST_ALL + [
+    "movie", "film", "cinema", "kino", "showtime", "session", "seans", "hall$",
+    "кино", "фильм", "сеанс", "reytinq", "рейтинг"]
+
+
+def _titles(m):
+    return [fold(m["title"])] + m.get("aliases", [])
+
+
+def _cinema_keys(repo):
+    return {c["id"]: c.get("aliases") or CINEMAS.get(c["id"], []) for c in repo.cinemas}
+
+
 def keywords(repo):
-    titles = [fold(m["title"]) for m in repo.movies]
-    return titles + sum(GENRES.values(), []) + sum(CINEMAS.values(), []) + LIST_ALL + [
-        "movie", "film", "cinema", "kino", "showtime", "session", "seans", "hall$",
-        "кино", "фильм", "сеанс", "reytinq", "рейтинг"]
+    # titles such as "44" or "Up" would grab unrelated messages, so short ones only match inside Cinema
+    titles = [w for m in repo.movies for w in _titles(m) if len(w) >= 4 and not w.isdigit()]
+    return titles + sum(_cinema_keys(repo).values(), []) + BASE_KEYWORDS
 
 
-def _movie_label(m, lang):
-    return f"{m['title']} ({'/'.join(m['genre'])} · {m['language']} · {m['age_rating']} · ★{m['rating']})"
+def _movie_label(m, lang, sh=None):
+    parts = ["/".join(m["genre"]), (sh or {}).get("language") or m["language"], m["age_rating"]]
+    if m["rating"] is not None:
+        parts.append(f"★{m['rating']}")
+    return f"{m['title']} ({' · '.join(p for p in parts if p)})"
 
 
 def _seats(sh, lang):
+    if sh["seats_available"] is None:
+        return tr(lang, "seats: see cinemaplus.az", "yerlər: cinemaplus.az", "места: см. cinemaplus.az")
     if sh["seats_available"] == 0:
         return tr(lang, "sold out", "yer yoxdur", "мест нет")
     return tr(lang, f"{sh['seats_available']} seats left", f"{sh['seats_available']} boş yer",
@@ -52,13 +72,29 @@ def _seats(sh, lang):
 
 def _line(i, sh, lang, repo):
     m, c = repo.movie(sh["movie_id"]), repo.cinema(sh["cinema_id"])
-    return (f"{i}. {_movie_label(m, lang)} — {fmt_day(sh['date'], lang)} {sh['time']} · {c['name']}, "
+    return (f"{i}. {_movie_label(m, lang, sh)} — {fmt_day(sh['date'], lang)} {sh['time']} · {c['name']}, "
             f"{sh['hall']} · {money(sh['price_azn'])} · {_seats(sh, lang)}")
+
+
+def _lines(items, lang, repo):
+    """Numbered showtime lines, at most LIMIT of them; seat maps for those are loaded in parallel.
+    Returns the text and the showtimes it shows (what 'the second one' refers to next)."""
+    shown = items[:LIMIT]
+    if hasattr(repo, "warm"):
+        repo.warm(shown)
+    text = "\n".join(_line(i, sh, lang, repo) for i, sh in enumerate(shown, 1))
+    if len(items) > LIMIT:
+        more = len(items) - LIMIT
+        text += "\n" + tr(lang, f"…and {more} more. Name a film, cinema or time to narrow it down.",
+                          f"…və daha {more} seans. Film, kinoteatr və ya vaxt yazın ki, daraldım.",
+                          f"…и ещё {more}. Уточните фильм, кинотеатр или время.")
+    return text, shown
 
 
 def _details(sh, lang, repo):
     m, c = repo.movie(sh["movie_id"]), repo.cinema(sh["cinema_id"])
-    return (f"{_movie_label(m, lang)}, {nlp.fmt_minutes(m['duration_min'], lang)}\n{m['synopsis']}\n"
+    runtime = f", {nlp.fmt_minutes(m['duration_min'], lang)}" if m["duration_min"] else ""
+    return (f"{_movie_label(m, lang, sh)}{runtime}\n{m['synopsis']}\n"
             f"{fmt_day(sh['date'], lang)} {sh['time']} · {c['name']} ({c['address']}), {sh['hall']}\n"
             f"{tr(lang, 'Ticket', 'Bilet', 'Билет')}: {money(sh['price_azn'])} · {_seats(sh, lang)}")
 
@@ -79,13 +115,13 @@ def _search(repo, movies, genres, langs, cinemas, day, window, rating=None):
             continue
         if genres and not set(genres) & set(m["genre"]):
             continue
-        if langs and m["language"] not in langs:
+        if langs and sh.get("language", m["language"]) not in langs:
             continue
         if cinemas and sh["cinema_id"] not in cinemas:
             continue
         if window and not window[0] <= int(sh["time"][:2]) < window[1]:
             continue
-        if rating and m["rating"] < rating:
+        if rating and (m["rating"] or 0) < rating:
             continue
         out.append(sh)
     return out
@@ -112,16 +148,24 @@ def _reserve(t, s, repo, sh):
               f"Bron edildi ✅ Kod {booking['ref']}: {m['title']} üçün {count} bilet, cəmi {total} "
               f"(test bronu, ödəniş yoxdur).",
               f"Забронировано ✅ Код {booking['ref']}: {count} билет(а) на {m['title']}, итого {total} "
-              f"(тестовая бронь, без оплаты).") + "\n" + _line(1, sh, lang, repo)[3:]
+              f"(тестовая бронь, без оплаты).") + "\n" + _line(1, sh, lang, repo)[3:] + _buy_link(booking, lang)
+
+
+def _buy_link(booking, lang):
+    if not booking.get("url"):
+        return ""
+    return "\n" + tr(lang, f"Buy the tickets on CinemaPlus: {booking['url']}",
+                     f"Biletləri CinemaPlus-da alın: {booking['url']}",
+                     f"Купить билеты на CinemaPlus: {booking['url']}")
 
 
 def handle(t, s, repo):
     lang, st = s["lang"], s["cinema"]
     shown = [repo.get(i) for i in st["results"]]
-    movies = [m["id"] for m in repo.movies if find(t, [fold(m["title"])])]
+    movies = [m["id"] for m in repo.movies if find(t, [w + "$" if len(w) < 4 else w for w in _titles(m)])]
     genres = [g for g, keys in GENRES.items() if find(t, keys)]
     langs = [name for name, keys in LANGUAGES.items() if find(t, keys)]
-    cinemas = [cid for cid, keys in CINEMAS.items() if find(t, keys)]
+    cinemas = [cid for cid, keys in _cinema_keys(repo).items() if find(t, keys)]
     day = nlp.parse_date(t)
     window = nlp.time_window(t)
     rating = _min_rating(t)
@@ -151,16 +195,15 @@ def handle(t, s, repo):
             return _reserve(t, s, repo, target)
         if found and not free:
             return tr(lang, "Sorry, that showtime is sold out.", "Təəssüf, bu seansa bilet qalmayıb.",
-                      "К сожалению, на этот сеанс билетов нет.") + "\n" + \
-                "\n".join(_line(i, sh, lang, repo) for i, sh in enumerate(found, 1))
+                      "К сожалению, на этот сеанс билетов нет.") + "\n" + _lines(found, lang, repo)[0]
         options = free or [sh for sh in shown if sh["seats_available"] > 0]
         if options:
+            text, options = _lines(options, lang, repo)
             st["results"] = [sh["id"] for sh in options]
             st["pending_book"] = t
             return tr(lang, "Which showtime should I book? For example: 'the first one'.",
                       "Hansı seansı bron edim? Məsələn: 'birincini'.",
-                      "Какой сеанс забронировать? Например: «первый».") + "\n" + \
-                "\n".join(_line(i, sh, lang, repo) for i, sh in enumerate(options, 1))
+                      "Какой сеанс забронировать? Например: «первый».") + "\n" + text
         return tr(lang, "Which film and showtime would you like to book?",
                   "Hansı film və seans üçün bron edim?", "На какой фильм и сеанс забронировать?")
     if ref:
@@ -171,15 +214,14 @@ def handle(t, s, repo):
         if selected:
             return _details(selected, lang, repo)
         if shown:  # "back to the films": the earlier results are still there
-            return tr(lang, "Your showtimes:", "Seanslarınız:", "Ваши сеансы:") + "\n" + \
-                "\n".join(_line(i, sh, lang, repo) for i, sh in enumerate(shown, 1))
+            return tr(lang, "Your showtimes:", "Seanslarınız:", "Ваши сеансы:") + "\n" + _lines(shown, lang, repo)[0]
 
     if not (movies or genres or langs or cinemas or day or rating):
         day = nlp.TODAY.isoformat()
     found = _search(repo, movies, genres, langs, cinemas, day, window, rating)
     if find(t, BEST) or rating:
-        found.sort(key=lambda sh: -repo.movie(sh["movie_id"])["rating"])
-    st["results"] = [sh["id"] for sh in found]
+        found.sort(key=lambda sh: -(repo.movie(sh["movie_id"])["rating"] or 0))
+    st["results"] = [sh["id"] for sh in found[:LIMIT]]
     st["showtime"] = found[0]["id"] if len(found) == 1 else None
     when = f" ({fmt_day(day, lang)})" if day else ""
     if not found:
@@ -190,5 +232,6 @@ def handle(t, s, repo):
             msg += " " + tr(lang, f"Showing on: {days}.", f"Bu tarixlərdə göstərilir: {days}.",
                             f"Идёт в эти дни: {days}.")
         return msg
+    text, _ = _lines(found, lang, repo)
     header = tr(lang, f"Showtimes{when}:", f"Seanslar{when}:", f"Сеансы{when}:")
-    return header + "\n" + "\n".join(_line(i, sh, lang, repo) for i, sh in enumerate(found, 1))
+    return header + "\n" + text

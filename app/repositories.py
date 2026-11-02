@@ -1,5 +1,5 @@
-"""Data access layer. Phase 1 reads the mock JSON files; in Phase 2 these
-classes are replaced by API clients with the same method signatures."""
+"""Data access layer for the official mock dataset. The live sources in app/sources/ implement
+the same methods, so the domain modules do not know which one they are talking to."""
 import json
 from pathlib import Path
 
@@ -19,6 +19,8 @@ def _load(name):
 
 
 class FlightRepository:
+    source = "mock dataset"
+
     def __init__(self):
         self._items = _load("flights.json")
         self.reservations = []
@@ -52,6 +54,8 @@ class FlightRepository:
 
 
 class ProductRepository:
+    source = "mock dataset"
+
     def __init__(self):
         self._items = _load("products.json")
 
@@ -63,6 +67,8 @@ class ProductRepository:
 
 
 class ShowtimeRepository:
+    source = "mock dataset"
+
     def __init__(self):
         self.movies = _load("movies.json")
         self.cinemas = _load("cinemas.json")

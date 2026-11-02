@@ -1,6 +1,6 @@
 # SuperChat: technical report
 
-One chat for flights (Aviasales), shopping (Shopping Assistant) and cinema (CinemaPlus). Phase 1, built on the official mock dataset.
+One chat for flights (Aviasales), shopping (Shopping Assistant) and cinema (CinemaPlus). Phase 1 was built on the official mock dataset. Phase 2 connects free real data sources: CinemaPlus's live schedule and the Aviasales Data API. The mock dataset stays as the offline fallback and as the routing test bed.
 
 ## 1. Architecture
 
@@ -17,8 +17,11 @@ FastAPI (app/main.py) ── session store (in memory, one dict per session_id)
    ├─ shopping.py ─┼─ domain modules: read the session state, call a repository, write the reply
    ├─ cinema.py   ─┘
    │
-   └─ repositories.py   FlightRepository · ProductRepository · ShowtimeRepository
-                         (Phase 1: JSON files in data/; Phase 2: real APIs)
+   ├─ repositories.py   mock FlightRepository · ProductRepository · ShowtimeRepository (data/*.json)
+   └─ sources/          live repositories with the same methods, chosen per domain at start-up
+        ├─ cinemaplus.py      CinemaPlus schedule, seat maps, film pages (cinemaplus.az)
+        ├─ travelpayouts.py   Aviasales Data API (prices) + Travelpayouts reference data
+        └─ ../apiclient.py    shared HTTP client: auth, rate limit, retries, cache, circuit breaker, logs
 ```
 
 Each message goes through a fixed pipeline:
@@ -27,7 +30,7 @@ Each message goes through a fixed pipeline:
 3. Call one module, or several for a mixed request.
 4. Join the replies.
 
-The UI shows which domain answered each reply and highlights the active domain. The whole application is Python 3 with FastAPI. It needs no external services and no language model, so it runs fully offline against the mock data. One command starts it: `uvicorn app.main:app`.
+The UI shows which domain answered each reply and highlights the active domain; a green dot on a domain marks live data. The whole application is Python 3 with FastAPI and uses no language model. With `SUPERCHAT_DATA=mock`, or with no network, it runs fully offline against the mock data. One command starts it: `uvicorn app.main:app`.
 
 ## 2. Routing method
 
@@ -79,9 +82,29 @@ Every session is a dict keyed by a `session_id`. The browser keeps the id in `se
 
 Field names follow Appendix A exactly. Reservations are mock: they lower `seats_available` in memory and return a booking reference. No payment and no personal data are involved.
 
-**Phase 2 swap.** Replace each class with an API client that has the same methods. Authentication, pagination, rate limiting, caching and retries live inside the client. Product search and filtering now run in the module over `all()`; with a large real catalogue, `ProductRepository` gets a `search(...)` method that pushes filters to the backend.
+**Phase 2: real data.** `app/sources/` holds live repositories with the same methods and field names, so the domain modules did not need a rewrite. `sources.build()` picks one source per domain at start-up. It uses the real API when that API is configured and answers, and the mock dataset otherwise. `GET /api/health` reports the choice.
 
-**Errors.** Load errors raise `DataSourceError`. Any exception inside a module is caught in `main.py`, logged on the server and answered with a polite "something went wrong" in the user's language. Stack traces never reach the chat.
+| Domain | Live source | Key | What is real |
+|---|---|---|---|
+| Cinema | cinemaplus.az: the schedule, seat-map and film-page endpoints its own website uses | none | films, showtimes in all 8 branches, halls, language, format, price, free seats, genre, runtime, synopsis |
+| Flights | Aviasales Data API `/aviasales/v3/prices_for_dates` + Travelpayouts `cities.json`, `airlines.json` | free token (`TRAVELPAYOUTS_TOKEN`) | airline, flight number, times, duration, stops, price; any city in EN/RU/AZ spelling |
+| Shopping | mock dataset (the real catalogue API is still to be chosen) | — | — |
+
+Mapping notes:
+- **CinemaPlus.** Each schedule row becomes a showtime. Azerbaijani titles from the same session ids become aliases, so "Odisseya" finds "The Odyssey". Genre, runtime and synopsis come from the film page. Free seats come from the seat map, counting the seats with status 1 as free. Both are loaded lazily: only for the showtimes about to be shown, and in parallel.
+- **Aviasales.** USD prices are converted at the official 1.70 peg. Arrival is turned into local time with the destination's time zone. The Data API has no baggage or seats-left fields, so they are `None` and the reply leaves them out rather than inventing them.
+- **Booking.** No public API sells tickets, so SuperChat keeps a booking reference, holds the seats in memory, and links to the CinemaPlus film page or the Aviasales search to buy. No payment is taken.
+
+**Phase 2 concerns (in `app/apiclient.py`, shared by every source):**
+- **Authentication.** Per-client headers or query parameters, here the `X-Access-Token` header. Secrets come from the environment or `.env` and are never logged.
+- **Rate limits.** A minimum gap between calls to each provider (0.1–0.3 s). `429` responses are retried and `Retry-After` is honoured.
+- **Pagination.** Aviasales results are read page by page (`limit`/`page`) until a short page arrives.
+- **Latency.** 8 s timeouts and two retries with exponential backoff. The site's own data loads in a background thread at start-up. Concurrent identical requests wait for the first one instead of repeating it. Long result lists stop at 10 lines.
+- **Caching.** An in-memory TTL per call: 10 min for schedules, 2 min for seat maps, 12 h for film pages, 15 min for prices, 24 h for reference data.
+- **Logging.** One line per call with provider, path, status and latency. `/api/health` adds call, cache-hit and error counters.
+- **Failure handling.** A circuit breaker skips a provider for 60 s after 3 failures in a row. A failed call becomes `DataSourceError`, which the chat answers with "CinemaPlus is not responding right now, please try again" in the user's language. Stack traces never reach the chat.
+
+**Live dates.** With live data, "today", "tonight" and "Friday" resolve against the current date in Baku (UTC+4), not the dataset's reference date.
 
 ## 5. Quality rules
 
@@ -116,6 +139,9 @@ Field names follow Appendix A exactly. Reservations are mock: they lower `seats_
 
 - **Vocabulary-bound understanding.** Phrasings, synonyms or typos outside the keyword lists may be routed to out of scope or ambiguous. This is the main cost of the rule-based choice.
 - **Data in English only.** The mock records (descriptions, synopses, colours, city names) are in English, so parts of an Azerbaijani or Russian reply stay in English. Product names are localised because the dataset provides them.
+- **Unofficial cinema endpoints.** CinemaPlus publishes no API. If its website changes, the cinema source fails and the chat says CinemaPlus is not responding; switching to mock data needs a restart. The "status 1 = free" reading of the seat map is inferred from the site's behaviour.
+- **Cached flight prices.** The Aviasales Data API returns prices other users found recently, not a live search. A date nobody searched may show no flights, and prices can differ on Aviasales.
+- **Shopping still on mock data**, until the real catalogue API is chosen.
 - **In-memory state.** Sessions, carts and mock bookings live in server memory and are lost on restart. With several server instances they would need a shared store such as Redis.
 - **One intent per domain per message.** Two different flights in one message are treated as one search.
 - **No real round-trip pricing.** Outbound and return flights are listed separately.
@@ -123,8 +149,9 @@ Field names follow Appendix A exactly. Reservations are mock: they lower `seats_
 
 ## 9. Libraries and sources
 
-- FastAPI (MIT licence), Uvicorn (BSD-3), Pydantic (MIT), python-multipart (Apache-2.0), Python standard library.
+- FastAPI (MIT licence), Uvicorn (BSD-3), Pydantic (MIT), python-multipart (Apache-2.0), HTTPX (BSD-3), tzdata (Apache-2.0), Python standard library.
+- Live data: cinemaplus.az (public website endpoints), Aviasales Data API and Travelpayouts reference data (free, travelpayouts.com).
 - Visual search: CLIP ViT-B/32 (OpenAI, MIT) in the ONNX export `Xenova/clip-vit-base-patch32`; ONNX Runtime (MIT), NumPy (BSD-3), Pillow (MIT-CMU), huggingface_hub (Apache-2.0).
 - Voice: the browser's Web Speech API and speechSynthesis. No extra library.
-- No language model and no external data provider for chat.
+- No language model.
 - Mock dataset supplied by the organisers. Visual test photos come from the author's earlier `visual-search` project.

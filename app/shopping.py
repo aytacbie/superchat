@@ -29,6 +29,13 @@ CART = ["cart", "basket", "sebet", "корзин"]
 STOCK = ["stock", "stok", "налич"]
 COMPARE = ["compare", "comparison", "difference", "vs$", "versus", "muqayise", "ferq", "сравн", "разниц"]
 _SKIP = {"saat", "dest", "speak", "lite", "pro"}
+# Words that only express wanting something; what is left of the message is the product asked for.
+_FILLER = {"salam", "hi", "hello", "hey", "привет", "здравствуйте", "mene", "menim", "ucun", "lazim", "lazimdi",
+           "lazimdir", "lazimdır", "need", "i", "a", "an", "the", "want", "to", "buy", "please", "do", "you", "have",
+           "sell", "is", "there", "any", "almaq", "isteyirem", "axtariram", "varmi", "var", "satirsiz", "mi", "bir",
+           "мне", "нужен", "нужна", "нужно", "купить", "хочу", "ищу", "есть", "у", "вас", "ли", "пожалуйста"}
+BASE_KEYWORDS = sum(CATEGORIES.values(), []) + sum(COLORS.values(), []) + CART + STOCK + [
+    "shop", "product", "mehsul", "magaza", "alis-veris", "товар", "магазин", "покупк"]
 
 
 def _stems(p):
@@ -52,8 +59,7 @@ def _short_names(p):
 def keywords(repo):
     stems = {stem for p in repo.all() for stem in _stems(p)}
     brands = {fold(p["brand"]) for p in repo.all()}
-    return sorted(stems | brands) + sum(CATEGORIES.values(), []) + sum(COLORS.values(), []) + CART + STOCK + [
-        "shop", "product", "mehsul", "magaza", "alis-veris", "товар", "магазин", "покупк"]
+    return sorted(stems | brands) + BASE_KEYWORDS
 
 
 def _price_range(t):
@@ -99,6 +105,22 @@ def _search(t, repo):
     if hi is not None:
         products = [p for p in products if p["price_azn"] <= hi]
     return sorted(products, key=lambda p: p["price_azn"])
+
+
+def _wanted(t):
+    """The product named in a free-text request: 'Salam, mənə iphone18 lazımdı' -> 'iphone 18'."""
+    t = re.sub(r"(?<=[^\W\d_])(?=\d)|(?<=\d)(?=[^\W\d_])", " ", t)  # iphone18 -> iphone 18
+    return " ".join(w for w in re.findall(r"\w+", t) if w not in _FILLER)
+
+
+def _not_found(t, repo, lang):
+    wanted = _wanted(t)
+    groups = ", ".join(sorted({p["category"] for p in repo.all()}))
+    if not wanted:
+        return None
+    return tr(lang, f"Sorry, '{wanted}' is not in our catalogue. We have: {groups}.",
+              f"Təəssüf, '{wanted}' kataloqumuzda yoxdur. Bizdə olanlar: {groups}.",
+              f"К сожалению, «{wanted}» нет в нашем каталоге. Есть: {groups}.")
 
 
 def _stock(p, lang):
@@ -195,6 +217,9 @@ def handle(t, s, repo):
     if shown:  # "back to shopping": the earlier results are still there
         return tr(lang, "Your earlier results:", "Əvvəlki nəticələr:", "Ваши результаты:") + "\n" + \
             "\n".join(_line(i, p, lang) for i, p in enumerate(shown, 1))
+    missing = _not_found(t, repo, lang)
+    if missing:
+        return missing
     return tr(lang, "What are you looking for? For example: 'wireless headphones under 100 AZN'.",
               "Nə axtarırsınız? Məsələn: '100 AZN-dən ucuz simsiz qulaqlıq'.",
               "Что вы ищете? Например: «беспроводные наушники до 100 AZN».")

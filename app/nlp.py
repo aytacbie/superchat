@@ -2,10 +2,16 @@
 detection, normalisation, dates, counts and references to earlier results."""
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 # Reference date of the mock dataset; "tonight", "Friday" etc. resolve against it.
+# With live data it is moved to the real date in Baku (see baku_today).
 TODAY = date.fromisoformat(os.environ.get("SUPERCHAT_TODAY", "2026-11-02"))
+BAKU = timezone(timedelta(hours=4))  # Azerbaijan has no daylight saving time
+
+
+def baku_today():
+    return datetime.now(BAKU).date()
 
 _FOLD = str.maketrans("əğıöüşçё", "egiousce")
 

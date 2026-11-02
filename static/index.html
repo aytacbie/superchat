@@ -35,6 +35,9 @@
   .mode.on[data-d=shopping] { background: var(--shopping); }
   .mode.on[data-d=cinema] { background: var(--cinema); }
   #reset { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 5px 10px; font-size: 13px; }
+  .mode.live::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+                      background: var(--good); margin-left: 6px; vertical-align: middle; }
+  .text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 
   main { flex: 1; overflow-y: auto; }
   #log { max-width: 860px; margin: 0 auto; padding: 24px 16px 8px; display: flex; flex-direction: column; gap: 18px; }
@@ -201,6 +204,21 @@ function itemCard(n, line) {
   return card;
 }
 
+// Booking replies end with a link to buy on Aviasales or CinemaPlus; make it clickable.
+function textLine(line) {
+  const div = el("div", "text");
+  line.split(/(https:\/\/\S+)/).forEach((part, i) => {
+    if (i % 2) {
+      const a = el("a", null, part);
+      a.href = part; a.target = "_blank"; a.rel = "noopener";
+      div.appendChild(a);
+    } else if (part) {
+      div.appendChild(document.createTextNode(part));
+    }
+  });
+  return div;
+}
+
 function section(text, domain, label) {
   const sec = el("div", "section");
   sec.style.setProperty("--c", DOMAINS[domain] ? DOMAINS[domain].color : "var(--neutral)");
@@ -215,7 +233,7 @@ function section(text, domain, label) {
       sec.appendChild(el("div", "total", line));
     } else if (line.trim()) {
       items = null;
-      sec.appendChild(el("div", "text", line));
+      sec.appendChild(textLine(line));
     }
   });
   return sec;
@@ -271,6 +289,15 @@ async function ask(url, init, bubble) {
   busy = false;
   resume();
 }
+
+// A green dot on a domain chip means it answers from the real API rather than the mock dataset.
+fetch("/api/health").then(r => r.json()).then(h => {
+  document.querySelectorAll(".mode").forEach(m => {
+    const src = h.domains[m.dataset.d]?.source || "";
+    m.classList.toggle("live", src !== "" && src !== "mock dataset");
+    m.title = "Data: " + src;
+  });
+}).catch(() => {});
 
 function send(text) {
   if (!text.trim()) return;
